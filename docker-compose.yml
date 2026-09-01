@@ -1,0 +1,14 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      OFFLINETUBE_DATA_DIR: /data
+      CORS_ORIGINS: "*"
+    volumes:
+      - offlinetube-data:/data
+
+volumes:
+  offlinetube-data:
