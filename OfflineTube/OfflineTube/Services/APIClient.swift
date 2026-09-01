@@ -60,7 +60,7 @@ actor APIClient {
     }
 
     private var baseURL: URL? {
-        let value = UserDefaults.standard.string(forKey: "backendURL") ?? "http://127.0.0.1:8000"
+        let value = UserDefaults.standard.string(forKey: "backendURL") ?? "https://offlinetube.cineviet.live"
         return URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 

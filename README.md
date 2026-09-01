@@ -13,11 +13,12 @@ Personal iOS 17+ offline YouTube media client. The SwiftUI app never runs `yt-dl
 ## Run backend
 
 ```bash
-docker compose up --build
-# API: http://localhost:8000, docs: http://localhost:8000/docs
+docker compose up -d --build
+# Local origin: http://127.0.0.1:18080
+# Production: https://offlinetube.cineviet.live
 ```
 
-Or use the Python setup in `backend/README.md`. For a real iPhone, expose the API via HTTPS (recommended) or a reachable LAN IP, then set that URL from the gear button in OfflineTube.
+Or use the Python setup in `backend/README.md`. The production app defaults to `https://offlinetube.cineviet.live`; the backend runs in Docker behind Nginx on loopback port `18080` with a persistent volume and restarts automatically after Docker/VPS restarts.
 
 ## iOS
 

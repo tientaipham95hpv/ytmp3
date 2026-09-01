@@ -32,7 +32,7 @@ struct RootView: View {
 
 private struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("backendURL") private var backendURL = "http://127.0.0.1:8000"
+    @AppStorage("backendURL") private var backendURL = "https://offlinetube.cineviet.live"
 
     var body: some View {
         NavigationStack {
@@ -42,7 +42,7 @@ private struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Text("Trên iPhone thật, dùng địa chỉ HTTPS hoặc IP LAN của máy chạy backend; 127.0.0.1 chỉ phù hợp khi API ở cùng thiết bị/môi trường mô phỏng.")
+                    Text("Mặc định dùng backend production 24/7. Chỉ thay đổi khi bạn tự triển khai một backend khác.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
