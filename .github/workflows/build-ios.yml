@@ -7,7 +7,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -41,8 +41,32 @@ jobs:
           mkdir -p "$RUNNER_TEMP/package/Payload"
           ditto "$APP" "$RUNNER_TEMP/package/Payload/OfflineTube.app"
           cd "$RUNNER_TEMP/package"
-          /usr/bin/zip -qry "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa" Payload
+          /usr/bin/zip -qry -y "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa" Payload
           test -s "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa"
+
+      - name: Validate IPA structure
+        run: |
+          set -euo pipefail
+          IPA="$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa"
+          VERIFY="$RUNNER_TEMP/verify-ipa"
+          /usr/bin/unzip -t "$IPA"
+          mkdir -p "$VERIFY"
+          /usr/bin/unzip -q "$IPA" -d "$VERIFY"
+          APP="$VERIFY/Payload/OfflineTube.app"
+          PLIST="$APP/Info.plist"
+          test -d "$APP"
+          test -f "$PLIST"
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")
+          test -n "$EXECUTABLE"
+          test -n "$BUNDLE_ID"
+          test -x "$APP/$EXECUTABLE"
+          /usr/bin/file "$APP/$EXECUTABLE" | grep -q 'Mach-O'
+          if /usr/bin/unzip -Z1 "$IPA" | grep -qv '^Payload/'; then
+            echo "IPA contains entries outside Payload/" >&2
+            exit 1
+          fi
+          echo "Validated $BUNDLE_ID ($EXECUTABLE)"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
@@ -51,3 +75,15 @@ jobs:
           path: OfflineTube-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
+
+      - name: Publish direct IPA download
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa#OfflineTube-unsigned.ipa" \
+            --title "OfflineTube $GITHUB_REF_NAME" \
+            --generate-notes
