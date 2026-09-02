@@ -3,6 +3,7 @@ import Combine
 import MediaPlayer
 import UIKit
 import SwiftData
+import SwiftUI
 
 @MainActor
 final class PlayerManager: ObservableObject {
@@ -30,10 +31,21 @@ final class PlayerManager: ObservableObject {
     private var sleepTask: Task<Void, Never>?
     private var modelContext: ModelContext?
     private var lastSavedSecond = -1
+    private var lastNowPlayingSecond = -1
+    private let stateKey = "player.session.v1"
+
+    private struct PersistedSession: Codable {
+        let queueIDs: [UUID]
+        let currentID: UUID?
+        let isShuffling: Bool
+        let repeatMode: String
+        let playbackSpeed: Float
+    }
 
     private init() {
         configureAudioSession()
         configureRemoteCommands()
+        observeAudioSession()
         observeTime()
     }
 
@@ -45,7 +57,7 @@ final class PlayerManager: ObservableObject {
 
     func play(_ item: MediaItem, queue newQueue: [MediaItem]? = nil) {
         guard FileManager.default.fileExists(atPath: item.localURL.path) else { return }
-        if let newQueue { queue = newQueue }
+        if let newQueue { queue = newQueue.filter(\.isAvailableOffline) }
         if queue.isEmpty { queue = [item] }
         if currentItem?.id != item.id {
             currentItem = item
@@ -54,12 +66,14 @@ final class PlayerManager: ObservableObject {
             saveContext()
             let playerItem = AVPlayerItem(url: item.localURL)
             player.replaceCurrentItem(with: playerItem)
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             duration = item.duration
             seek(to: item.playbackPosition)
             observeEnd(of: playerItem)
         }
         player.playImmediately(atRate: playbackSpeed)
         isPlaying = true
+        persistSession()
         updateNowPlaying()
     }
 
@@ -81,7 +95,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func resume() {
-        guard currentItem != nil else { return }
+        guard currentItem?.isAvailableOffline == true else { return }
         player.playImmediately(atRate: playbackSpeed)
         isPlaying = true
         updateNowPlaying()
@@ -102,9 +116,7 @@ final class PlayerManager: ObservableObject {
         guard let currentItem, !queue.isEmpty,
               let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return }
         let nextIndex: Int
-        if isShuffling, queue.count > 1 {
-            nextIndex = queue.indices.filter { $0 != index }.randomElement() ?? index
-        } else if index + 1 < queue.count {
+        if index + 1 < queue.count {
             nextIndex = index + 1
         } else if repeatMode == .all {
             nextIndex = 0
@@ -120,7 +132,9 @@ final class PlayerManager: ObservableObject {
         if currentTime > 5 { seek(to: 0); return }
         guard let currentItem, !queue.isEmpty,
               let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return }
-        play(queue[index > 0 ? index - 1 : max(0, queue.count - 1)])
+        if index > 0 { play(queue[index - 1]) }
+        else if repeatMode == .all { play(queue[queue.count - 1]) }
+        else { seek(to: 0) }
     }
 
     func cycleRepeatMode() {
@@ -129,12 +143,38 @@ final class PlayerManager: ObservableObject {
         case .all: repeatMode = .one
         case .one: repeatMode = .off
         }
+        persistSession()
+    }
+
+    func toggleShuffle() {
+        isShuffling.toggle()
+        guard let currentItem else { persistSession(); return }
+        let remaining = queue.filter { $0.id != currentItem.id }
+        queue = [currentItem] + (isShuffling ? remaining.shuffled() : remaining)
+        persistSession()
+    }
+
+    func moveQueue(from source: IndexSet, to destination: Int) {
+        queue.move(fromOffsets: source, toOffset: destination)
+        persistSession()
+    }
+
+    func removeFromQueue(at offsets: IndexSet) {
+        let currentID = currentItem?.id
+        queue.remove(atOffsets: offsets)
+        if let currentID, !queue.contains(where: { $0.id == currentID }) {
+            player.replaceCurrentItem(with: nil)
+            currentItem = nil; currentTime = 0; duration = 0; isPlaying = false
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        }
+        persistSession()
     }
 
     func setSpeed(_ speed: Float) {
         playbackSpeed = speed
         if isPlaying { player.rate = speed }
         updateNowPlaying()
+        persistSession()
     }
 
     func setSleepTimer(minutes: Int?) {
@@ -155,20 +195,25 @@ final class PlayerManager: ObservableObject {
 
     func stopIfPlaying(_ item: MediaItem) {
         queue.removeAll { $0.id == item.id }
-        guard currentItem?.id == item.id else { return }
+        guard currentItem?.id == item.id else { persistSession(); return }
         pause()
         player.replaceCurrentItem(with: nil)
         currentItem = nil
         currentTime = 0
         duration = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        persistSession()
     }
 
-    func attach(modelContext: ModelContext) { self.modelContext = modelContext }
+    func attach(modelContext: ModelContext) {
+        self.modelContext = modelContext
+        restoreSessionIfNeeded()
+    }
 
     func savePlaybackState() {
         persistPosition()
         saveContext()
+        persistSession()
     }
 
     private func configureAudioSession() {
@@ -181,7 +226,7 @@ final class PlayerManager: ObservableObject {
     }
 
     private func observeTime() {
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 2), queue: .main) { [weak self] time in
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 4), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
                 self.currentTime = max(0, time.seconds.isFinite ? time.seconds : 0)
@@ -189,7 +234,11 @@ final class PlayerManager: ObservableObject {
                     self.duration = seconds
                 }
                 self.persistPosition()
-                self.updateNowPlaying()
+                let second = Int(self.currentTime)
+                if second != self.lastNowPlayingSecond {
+                    self.lastNowPlayingSecond = second
+                    self.updateNowPlaying()
+                }
             }
         }
     }
@@ -219,6 +268,52 @@ final class PlayerManager: ObservableObject {
     }
 
     private func saveContext() { try? modelContext?.save() }
+
+    private func persistSession() {
+        let session = PersistedSession(
+            queueIDs: queue.map(\.id), currentID: currentItem?.id,
+            isShuffling: isShuffling, repeatMode: repeatMode.rawValue,
+            playbackSpeed: playbackSpeed
+        )
+        if let data = try? JSONEncoder().encode(session) { UserDefaults.standard.set(data, forKey: stateKey) }
+    }
+
+    private func restoreSessionIfNeeded() {
+        guard currentItem == nil, let modelContext,
+              let data = UserDefaults.standard.data(forKey: stateKey),
+              let session = try? JSONDecoder().decode(PersistedSession.self, from: data),
+              let allItems = try? modelContext.fetch(FetchDescriptor<MediaItem>()) else { return }
+        let available = Dictionary(uniqueKeysWithValues: allItems.filter(\.isAvailableOffline).map { ($0.id, $0) })
+        queue = session.queueIDs.compactMap { available[$0] }
+        isShuffling = session.isShuffling
+        repeatMode = RepeatMode(rawValue: session.repeatMode) ?? .off
+        playbackSpeed = session.playbackSpeed
+        guard let currentID = session.currentID, let item = available[currentID] else {
+            persistSession(); return
+        }
+        if !queue.contains(where: { $0.id == item.id }) { queue.insert(item, at: 0) }
+        currentItem = item
+        let playerItem = AVPlayerItem(url: item.localURL)
+        player.replaceCurrentItem(with: playerItem)
+        duration = item.duration
+        currentTime = min(max(0, item.playbackPosition), max(item.duration, item.playbackPosition))
+        player.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600))
+        observeEnd(of: playerItem)
+        updateNowPlaying()
+    }
+
+    private func observeAudioSession() {
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+            Task { @MainActor in
+                guard let self,
+                      let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                      let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+                if type == .began { self.pause() }
+                else if let rawOptions = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt,
+                        AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume) { self.resume() }
+            }
+        }
+    }
 
     private func updateNowPlaying() {
         guard let item = currentItem else { return }
@@ -262,6 +357,11 @@ final class PlayerManager: ObservableObject {
 
     private func configureRemoteCommands() {
         let center = MPRemoteCommandCenter.shared()
+        center.playCommand.isEnabled = true
+        center.pauseCommand.isEnabled = true
+        center.nextTrackCommand.isEnabled = true
+        center.previousTrackCommand.isEnabled = true
+        center.changePlaybackPositionCommand.isEnabled = true
         center.playCommand.addTarget { [weak self] _ in Task { @MainActor in self?.resume() }; return .success }
         center.pauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.pause() }; return .success }
         center.togglePlayPauseCommand.addTarget { [weak self] _ in Task { @MainActor in self?.toggle() }; return .success }

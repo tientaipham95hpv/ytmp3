@@ -6,6 +6,7 @@ struct PlayerView: View {
     @EnvironmentObject private var player: PlayerManager
     @State private var sleepSheet = false
     @State private var showVideoFullscreen = false
+    @State private var showQueue = false
 
     var body: some View {
         NavigationStack {
@@ -31,11 +32,12 @@ struct PlayerView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { Button { dismiss() } label: { Image(systemName: "chevron.down").font(.headline) } }
                 ToolbarItem(placement: .principal) { Text("Now Playing").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary) }
-                ToolbarItem(placement: .topBarTrailing) { Menu { Button("End Sleep Timer") { player.setSleepTimer(minutes: nil) }.disabled(player.sleepTimerEnd == nil) } label: { Image(systemName: "ellipsis.circle") } }
+                ToolbarItem(placement: .topBarTrailing) { Button { showQueue = true } label: { Image(systemName: "text.line.first.and.arrowtriangle.forward") } }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $sleepSheet) { SleepTimerSheet() }
+        .sheet(isPresented: $showQueue) { UpNextSheet() }
         .fullScreenCover(isPresented: $showVideoFullscreen) {
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
@@ -85,7 +87,7 @@ struct PlayerView: View {
 
     private var secondaryControls: some View {
         HStack {
-            Button { player.isShuffling.toggle() } label: { Image(systemName: "shuffle").foregroundStyle(player.isShuffling ? Color.accentColor : .primary) }.frame(maxWidth: .infinity)
+            Button { player.toggleShuffle() } label: { Image(systemName: "shuffle").foregroundStyle(player.isShuffling ? Color.accentColor : .primary) }.frame(maxWidth: .infinity)
             Menu {
                 ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { speed in Button("\(speed, specifier: "%g")×") { player.setSpeed(Float(speed)) } }
             } label: { Text("\(player.playbackSpeed, specifier: "%g")×").font(.subheadline.bold()).frame(maxWidth: .infinity) }
@@ -98,6 +100,42 @@ struct PlayerView: View {
 
     private var background: some View {
         LinearGradient(colors: [Color.accentColor.opacity(0.16), Color(.systemBackground)], startPoint: .top, endPoint: .center).ignoresSafeArea()
+    }
+}
+
+private struct UpNextSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var player: PlayerManager
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if player.queue.isEmpty {
+                    ContentUnavailableView("Queue is empty", systemImage: "text.line.first.and.arrowtriangle.forward")
+                } else {
+                    ForEach(player.queue) { item in
+                        Button { player.play(item) } label: {
+                            HStack(spacing: 12) {
+                                ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 58, height: 42)
+                                VStack(alignment: .leading) {
+                                    Text(item.title).lineLimit(1)
+                                    Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                if player.currentItem?.id == item.id { Image(systemName: "speaker.wave.2.fill").foregroundStyle(.tint) }
+                            }
+                        }.buttonStyle(.plain)
+                    }
+                    .onMove(perform: player.moveQueue)
+                    .onDelete(perform: player.removeFromQueue)
+                }
+            }
+            .navigationTitle("Up Next")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) { EditButton() }
+            }
+        }
     }
 }
 
