@@ -13,7 +13,11 @@ final class DownloadViewModel: ObservableObject {
     @Published var urlText = ""
     @Published var mediaInfo: MediaInfo?
     @Published var mediaKind: MediaKind = .audio {
-        didSet { quality = mediaKind == .audio ? "original" : "720" }
+        didSet {
+            quality = mediaKind == .audio
+                ? (UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original")
+                : (UserDefaults.standard.string(forKey: "defaultVideoQuality") ?? "720")
+        }
     }
     @Published var quality = "original"
     @Published var isLoadingInfo = false
@@ -29,6 +33,10 @@ final class DownloadViewModel: ObservableObject {
 
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
+
+    init() {
+        quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
+    }
 
     func fetchInfo() async {
         let value = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
