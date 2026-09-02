@@ -119,7 +119,23 @@
     "Select cookies.txt below. OfflineTube sends it over HTTPS; the server tests YouTube before replacing the active cookie." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn cookies.txt bên dưới. OfflineTube gửi file qua HTTPS; máy chủ thử YouTube trước khi thay cookie đang dùng." } } } },
     "Sign in to YouTube" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng nhập YouTube" } } } },
     "Update cookies without a computer" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Cập nhật cookie không cần máy tính" } } } },
-    "Verify and replace" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kiểm tra và thay thế" } } } }
+    "Verify and replace" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kiểm tra và thay thế" } } } },
+    "Manage Storage" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Quản lý dung lượng" } } } },
+    "Storage Overview" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tổng quan dung lượng" } } } },
+    "Total app storage" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tổng dung lượng ứng dụng" } } } },
+    "Artwork / Cache" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ảnh bìa / Bộ nhớ đệm" } } } },
+    "Temporary / Other" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tạm thời / Khác" } } } },
+    "Available on device" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Còn trống trên thiết bị" } } } },
+    "Cleanup" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Dọn dẹp" } } } },
+    "Clear artwork cache" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa bộ nhớ đệm ảnh bìa" } } } },
+    "Media by Size" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nội dung theo dung lượng" } } } },
+    "Select" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn" } } } },
+    "Delete Selected" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa mục đã chọn" } } } },
+    "Delete selected downloads?" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa các bản tải đã chọn?" } } } },
+    "Files, Library metadata and playlist references will be removed." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "File, dữ liệu Thư viện và liên kết playlist sẽ bị xóa." } } } },
+    "Clear artwork cache?" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa bộ nhớ đệm ảnh bìa?" } } } },
+    "Clear Cache" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa bộ nhớ đệm" } } } },
+    "Artwork can be downloaded again when the device is online." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ảnh bìa có thể được tải lại khi thiết bị có mạng." } } } }
   },
   "version" : "1.0"
 }

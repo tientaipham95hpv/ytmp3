@@ -150,6 +150,7 @@ final class DownloadViewModel: ObservableObject {
         guard let info = mediaInfo else { return }
         self.modelContext = modelContext
         do {
+            try FileStore.cleanupTemporaryFiles()
             try FileStore.ensureCapacity()
             let sourceID = info.id
             let existing = try modelContext.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceID == sourceID }))

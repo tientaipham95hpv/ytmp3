@@ -40,6 +40,7 @@ struct RootView: View {
         .environmentObject(downloads)
         .environmentObject(network)
         .task {
+            try? FileStore.cleanupTemporaryFiles()
             downloads.attach(modelContext: modelContext)
             player.attach(modelContext: modelContext)
             reconcileOfflineLibrary()

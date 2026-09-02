@@ -12,8 +12,6 @@ struct SettingsView: View {
     @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
     @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
     @AppStorage("backendURL") private var backendURL = "https://offlinetube.cineviet.live"
-    @State private var storage: Int64 = 0
-    @State private var confirmDeleteAll = false
     @State private var resultMessage: String?
     @State private var accessToken = ""
     @State private var showCookieImporter = false
@@ -31,10 +29,9 @@ struct SettingsView: View {
                 }
             }
             Section("Storage") {
-                LabeledContent("Downloaded media", value: storage.formattedBytes)
-                LabeledContent("Items", value: "\(items.count)")
-                Button("Clear orphaned cache") { clearCache() }
-                Button("Delete all downloads", role: .destructive) { confirmDeleteAll = true }
+                NavigationLink { StorageManagementView() } label: {
+                    Label("Manage Storage", systemImage: "internaldrive")
+                }
             }
             Section("Appearance") {
                 Picker("Language", selection: $language) { ForEach(AppLanguage.allCases) { Text($0.title).tag($0.rawValue) } }
@@ -66,7 +63,7 @@ struct SettingsView: View {
             Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
         }
         .navigationTitle("Settings")
-        .task { refreshStorage(); accessToken = KeychainStore.token() ?? "" }
+        .task { accessToken = KeychainStore.token() ?? "" }
         .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             updateCookies(from: url)
@@ -77,23 +74,7 @@ struct SettingsView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showCookieImporter = true }
             }
         }
-        .confirmationDialog("Delete every downloaded file?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
-            Button("Delete All", role: .destructive) { deleteAll() }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("This cannot be undone.") }
         .alert("OfflineTube", isPresented: Binding(get: { resultMessage != nil }, set: { if !$0 { resultMessage = nil } })) { Button("OK") { resultMessage = nil } } message: { Text(resultMessage ?? "") }
-    }
-
-    private func refreshStorage() { storage = FileStore.storageUsage() }
-    private func clearCache() {
-        do { try FileStore.clearOrphanedFiles(keeping: items); refreshStorage(); resultMessage = localized("Cache cleared.", "Đã dọn bộ nhớ đệm.") }
-        catch { resultMessage = error.localizedDescription }
-    }
-    private func deleteAll() {
-        do {
-            for item in items { player.stopIfPlaying(item); try FileStore.remove(item); modelContext.delete(item) }
-            try modelContext.save(); refreshStorage(); Haptics.success(); resultMessage = localized("All downloads were deleted.", "Đã xóa toàn bộ nội dung tải về.")
-        } catch { resultMessage = error.localizedDescription }
     }
 
     private func localized(_ english: String, _ vietnamese: String) -> String { language == AppLanguage.vietnamese.rawValue ? vietnamese : english }
@@ -120,6 +101,153 @@ struct SettingsView: View {
             } catch { resultMessage = error.localizedDescription }
         }
     }
+}
+
+private struct StorageManagementView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var player: PlayerManager
+    @Query private var items: [MediaItem]
+    @Query private var playlists: [MediaPlaylist]
+    @State private var selection = Set<UUID>()
+    @State private var snapshot = FileStore.StorageSnapshot(total: 0, audio: 0, video: 0, artwork: 0, temporary: 0, available: nil)
+    @State private var pendingDelete: [MediaItem] = []
+    @State private var confirmDelete = false
+    @State private var confirmDeleteAll = false
+    @State private var confirmClearArtwork = false
+    @State private var resultMessage: String?
+    @State private var editMode: EditMode = .inactive
+
+    private var sortedItems: [MediaItem] {
+        items.sorted { FileStore.fileSize(for: $0) > FileStore.fileSize(for: $1) }
+    }
+
+    var body: some View {
+        List(selection: $selection) {
+            Section("Storage Overview") {
+                storageRow("Total app storage", icon: "internaldrive.fill", value: snapshot.total)
+                storageRow("Audio", icon: "waveform", value: snapshot.audio)
+                storageRow("Video", icon: "video.fill", value: snapshot.video)
+                storageRow("Artwork / Cache", icon: "photo.fill", value: snapshot.artwork)
+                storageRow("Temporary / Other", icon: "clock.arrow.circlepath", value: snapshot.temporary)
+                if let available = snapshot.available {
+                    storageRow("Available on device", icon: "iphone", value: available)
+                }
+            }
+
+            Section("Cleanup") {
+                Button { confirmClearArtwork = true } label: { Label("Clear artwork cache", systemImage: "photo.badge.minus") }
+                Button("Delete all downloads", role: .destructive) { confirmDeleteAll = true }
+            }
+
+            Section("Media by Size") {
+                if sortedItems.isEmpty {
+                    ContentUnavailableView("No Downloads", systemImage: "internaldrive")
+                } else {
+                    ForEach(sortedItems) { item in
+                        HStack(spacing: 12) {
+                            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 64, height: 46)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title).lineLimit(1)
+                                Text(item.isVideo ? "Video" : "Audio").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(FileStore.fileSize(for: item).formattedBytes).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        }
+                        .tag(item.id)
+                        .swipeActions {
+                            Button(role: .destructive) { requestDelete([item]) } label: { Label("Delete", systemImage: "trash") }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Manage Storage")
+        .environment(\.editMode, $editMode)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(editMode == .active ? "Done" : "Select") {
+                    withAnimation { editMode = editMode == .active ? .inactive : .active }
+                    if editMode == .inactive { selection.removeAll() }
+                }.disabled(items.isEmpty)
+            }
+            if editMode == .active && !selection.isEmpty {
+                ToolbarItem(placement: .bottomBar) {
+                    Button(role: .destructive) {
+                        requestDelete(items.filter { selection.contains($0.id) })
+                    } label: { Label("Delete Selected", systemImage: "trash") }
+                }
+            }
+        }
+        .task { cleanupTempAndRefresh() }
+        .confirmationDialog("Delete selected downloads?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Delete \(pendingDelete.count) Items", role: .destructive) { delete(pendingDelete) }
+            Button("Cancel", role: .cancel) { pendingDelete = [] }
+        } message: { Text("Files, Library metadata and playlist references will be removed.") }
+        .confirmationDialog("Delete every downloaded file?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
+            Button("Delete All", role: .destructive) { delete(items) }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This cannot be undone.") }
+        .confirmationDialog("Clear artwork cache?", isPresented: $confirmClearArtwork, titleVisibility: .visible) {
+            Button("Clear Cache", role: .destructive) { clearArtwork() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("Artwork can be downloaded again when the device is online.") }
+        .alert("OfflineTube", isPresented: Binding(get: { resultMessage != nil }, set: { if !$0 { resultMessage = nil } })) {
+            Button("OK") { resultMessage = nil }
+        } message: { Text(resultMessage ?? "") }
+    }
+
+    private func storageRow(_ title: LocalizedStringKey, icon: String, value: Int64) -> some View {
+        LabeledContent { Text(value.formattedBytes).monospacedDigit() } label: { Label(title, systemImage: icon) }
+    }
+
+    private func requestDelete(_ selected: [MediaItem]) {
+        pendingDelete = selected
+        confirmDelete = !selected.isEmpty
+    }
+
+    private func delete(_ selected: [MediaItem]) {
+        var deleted: [MediaItem] = []
+        var firstError: Error?
+        for item in selected {
+            do {
+                player.stopIfPlaying(item)
+                try FileStore.remove(item)
+                deleted.append(item)
+            } catch { firstError = firstError ?? error }
+        }
+        let ids = Set(deleted.map(\.id))
+        do {
+            playlists.forEach { playlist in
+                playlist.itemIDs.removeAll { ids.contains($0) }
+                playlist.updatedAt = Date()
+            }
+            deleted.forEach(modelContext.delete)
+            try modelContext.save()
+            selection.subtract(ids); pendingDelete = []; editMode = .inactive
+            refresh(); Haptics.success()
+            if let firstError { resultMessage = firstError.localizedDescription }
+        } catch {
+            resultMessage = error.localizedDescription
+            refresh()
+        }
+    }
+
+    private func clearArtwork() {
+        do {
+            try FileStore.clearArtworkCache(items: items)
+            try modelContext.save(); refresh(); Haptics.success()
+        } catch { resultMessage = error.localizedDescription }
+    }
+
+    private func cleanupTempAndRefresh() {
+        do {
+            try FileStore.cleanupTemporaryFiles()
+            try FileStore.clearOrphanedFiles(keeping: items)
+        } catch { resultMessage = error.localizedDescription }
+        refresh()
+    }
+
+    private func refresh() { snapshot = FileStore.storageSnapshot(items: items) }
 }
 
 private struct CookieGuideView: View {
