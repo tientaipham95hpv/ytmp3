@@ -26,6 +26,15 @@ jobs: dict[str, dict] = {}
 files: dict[str, Path] = {}
 active_tasks: set[asyncio.Task] = set()
 state_lock = Lock()
+POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
+
+
+def yt_dlp_common_args() -> list[str]:
+    return [
+        "--js-runtimes", "deno",
+        "--extractor-args", f"youtubepot-bgutilhttp:base_url={POT_PROVIDER_URL}",
+        "--sleep-requests", "1",
+    ]
 
 
 def utc_now() -> str:
@@ -101,7 +110,7 @@ async def media_info(request: URLRequest) -> dict:
         require_binary("yt-dlp")
         result = await asyncio.to_thread(
             run_command,
-            ["yt-dlp", "--js-runtimes", "deno", "--dump-single-json", "--no-playlist", "--skip-download", request.url],
+            ["yt-dlp", *yt_dlp_common_args(), "--dump-single-json", "--no-playlist", "--skip-download", request.url],
         )
     except (RuntimeError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -138,7 +147,9 @@ def progress_from_line(line: str) -> float | None:
 
 def build_download_command(request: DownloadRequest, output_template: str) -> list[str]:
     base = [
-        "yt-dlp", "--js-runtimes", "deno", "--no-playlist", "--newline", "--no-part", "--restrict-filenames",
+        "yt-dlp", *yt_dlp_common_args(),
+        "--sleep-interval", "5", "--max-sleep-interval", "10",
+        "--no-playlist", "--newline", "--no-part", "--restrict-filenames",
         "--progress-template", "download:%(progress._percent_str)s", "-o", output_template,
     ]
     if request.media_type == "audio":

@@ -41,6 +41,9 @@ def test_audio_and_video_commands():
     video_command = main.build_download_command(video, "/tmp/out.%(ext)s")
     assert "height<=720" in video_command[video_command.index("-f") + 1]
     assert "--recode-video" in video_command
+    assert "--sleep-requests" in video_command
+    assert "--sleep-interval" in video_command
+    assert "youtubepot-bgutilhttp:base_url=" in video_command[video_command.index("--extractor-args") + 1]
 
 
 def test_file_endpoint_is_not_guessable(tmp_path: Path, monkeypatch):
