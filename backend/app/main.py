@@ -9,14 +9,18 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 import uuid
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Literal
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -35,7 +39,14 @@ POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 YOUTUBE_COOKIES_FILE = Path(os.getenv("YOUTUBE_COOKIES_FILE", "/run/secrets/youtube-cookies.txt"))
 API_ACCESS_TOKEN_FILE = Path(os.getenv("API_ACCESS_TOKEN_FILE", "/run/secrets/api-access-token.txt"))
 MIN_FREE_BYTES = int(os.getenv("MIN_FREE_BYTES", str(512 * 1024 * 1024)))
+MAX_CONCURRENT_DOWNLOADS = max(1, int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2")))
+MAX_DOWNLOAD_SECONDS = max(60, int(os.getenv("MAX_DOWNLOAD_SECONDS", "7200")))
+MAX_DURATION_SECONDS = max(0, int(os.getenv("MAX_DURATION_SECONDS", "14400")))
+MAX_FILE_BYTES = max(0, int(os.getenv("MAX_FILE_BYTES", str(8 * 1024 * 1024 * 1024))))
+TEMP_RETENTION_SECONDS = max(60, int(os.getenv("TEMP_RETENTION_SECONDS", "86400")))
 logger = logging.getLogger("offlinetube.downloads")
+download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+cleanup_task: asyncio.Task | None = None
 
 
 def yt_dlp_common_args(cookie_file: Path | None = None) -> list[str]:
@@ -98,7 +109,29 @@ class CookieUpdateRequest(BaseModel):
         return URLRequest(url=value).url
 
 
-app = FastAPI(title="OfflineTube API", version="1.0.0")
+async def cleanup_loop() -> None:
+    while True:
+        await asyncio.to_thread(cleanup_stale_data)
+        await asyncio.sleep(min(3600, max(60, TEMP_RETENTION_SECONDS // 4)))
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    global cleanup_task
+    cleanup_stale_data()
+    cleanup_task = asyncio.create_task(cleanup_loop())
+    yield
+    cleanup_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await cleanup_task
+    with state_lock:
+        processes = list(active_processes.values())
+    for process in processes:
+        if process.poll() is None:
+            process.terminate()
+
+
+app = FastAPI(title="OfflineTube API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[item.strip() for item in os.getenv("CORS_ORIGINS", "*").split(",")],
@@ -106,6 +139,23 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(HTTPException)
+async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+    message = str(exc.detail)
+    code = {
+        401: "unauthorized", 403: "forbidden", 404: "not_found", 408: "timeout",
+        413: "file_too_large", 422: "invalid_request", 429: "rate_limited",
+        500: "internal_error", 502: "upstream_error", 503: "service_unavailable", 507: "insufficient_storage",
+    }.get(exc.status_code, "request_failed")
+    return JSONResponse(status_code=exc.status_code, content={"detail": message, "error_code": code, "message": message})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    message = "; ".join(str(item.get("msg", "Invalid input")).replace("Value error, ", "") for item in exc.errors())
+    return JSONResponse(status_code=422, content={"detail": message, "error_code": "invalid_request", "message": message})
 
 
 def configured_api_token() -> str | None:
@@ -135,12 +185,38 @@ def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health() -> dict:
+    with state_lock:
+        queued = sum(job.get("status") == "queued" for job in jobs.values())
+        downloading = sum(job.get("status") == "downloading" for job in jobs.values())
+    return {
+        "status": "ok", "service": "offlinetube-backend",
+        "queued": queued, "downloading": downloading,
+        "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
+        "free_bytes": shutil.disk_usage(DOWNLOAD_DIR).free,
+    }
+
+
+@app.get("/api/jobs")
+async def list_jobs() -> dict:
+    with state_lock:
+        items = sorted((dict(job) for job in jobs.values()), key=lambda job: job["created_at"], reverse=True)
+    return {
+        "items": items,
+        "queued": sum(item["status"] == "queued" for item in items),
+        "downloading": sum(item["status"] == "downloading" for item in items),
+        "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
+    }
 
 
 def _friendly_error(stderr: str) -> tuple[int, str]:
     text = stderr.lower()
+    if "download_timeout" in text:
+        return 408, "Download exceeded the configured server timeout."
+    if "file_size_limit" in text:
+        return 413, "Media exceeds the configured maximum file size."
+    if "duration_limit" in text or "longer than" in text and "seconds" in text:
+        return 422, "Media exceeds the configured maximum duration."
     if "sign in to confirm you”re not a bot" in text or "not a bot" in text:
         return 403, "YouTube đang chặn (xác minh bạn không phải bot). Thử lại sau hoặc dùng video khác."
     if "private video" in text or "private" in text and "video" in text:
@@ -206,12 +282,15 @@ async def media_info(request: URLRequest) -> dict:
         raise HTTPException(status_code=502, detail="yt-dlp returned invalid metadata") from exc
     thumbnails = data.get("thumbnails") or []
     thumbnail = data.get("thumbnail") or (thumbnails[-1].get("url") if thumbnails else None)
+    duration = int(data.get("duration") or 0)
+    if MAX_DURATION_SECONDS and duration > MAX_DURATION_SECONDS:
+        raise HTTPException(status_code=422, detail=f"Media duration exceeds the {MAX_DURATION_SECONDS}-second limit.")
     return {
         "id": str(data.get("id", "")),
         "title": data.get("title") or "Untitled",
         "thumbnail": thumbnail,
         "channel": data.get("channel") or data.get("uploader") or "Unknown channel",
-        "duration": int(data.get("duration") or 0),
+        "duration": duration,
         "webpage_url": data.get("webpage_url") or request.url,
         "estimated_sizes": estimated_sizes(data),
     }
@@ -272,6 +351,10 @@ def build_download_command(request: DownloadRequest, output_template: str) -> li
         "--no-playlist", "--newline", "--no-part", "--restrict-filenames",
         "--progress-template", "download:%(progress._percent_str)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s", "-o", output_template,
     ]
+    if MAX_DURATION_SECONDS:
+        base += ["--match-filter", f"duration <= {MAX_DURATION_SECONDS}"]
+    if MAX_FILE_BYTES:
+        base += ["--max-filesize", str(MAX_FILE_BYTES)]
     if request.media_type == "audio":
         base += ["-f", "bestaudio/best"]
         if request.quality in {"original", "m4a"}:
@@ -301,7 +384,30 @@ def cleanup_job_files(job_id: str) -> None:
                 logger.exception("job=%s failed to remove partial file", job_id)
 
 
+def cleanup_stale_data() -> None:
+    cutoff = time.time() - TEMP_RETENTION_SECONDS
+    with state_lock:
+        active_ids = set(active_processes)
+        stale_jobs = {
+            job_id for job_id, job in jobs.items()
+            if job_id not in active_ids
+            and job.get("status") in {"completed", "failed", "cancelled"}
+            and datetime.fromisoformat(job.get("updated_at", utc_now())).timestamp() < cutoff
+        }
+        stale_file_ids = {file_id for file_id, path in files.items() if not path.is_file() or path.stat().st_mtime < cutoff}
+        for job_id in stale_jobs:
+            jobs.pop(job_id, None)
+        for file_id in stale_file_ids:
+            path = files.pop(file_id, None)
+            if path and path.is_file():
+                path.unlink(missing_ok=True)
+    for path in DOWNLOAD_DIR.iterdir():
+        if path.is_file() and path.stat().st_mtime < cutoff and path.stem not in active_ids:
+            path.unlink(missing_ok=True)
+
+
 def execute_download(job_id: str, request: DownloadRequest) -> None:
+    timeout_timer: threading.Timer | None = None
     try:
         logger.info("job=%s starting type=%s quality=%s", job_id, request.media_type, request.quality)
         require_binary("yt-dlp")
@@ -310,6 +416,18 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
         command = build_download_command(request, output_template)
         update_job(job_id, status="downloading", progress=0.0)
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        timed_out = False
+        size_exceeded = False
+
+        def terminate_for_timeout() -> None:
+            nonlocal timed_out
+            if process.poll() is None:
+                timed_out = True
+                process.terminate()
+
+        timeout_timer = threading.Timer(MAX_DOWNLOAD_SECONDS, terminate_for_timeout)
+        timeout_timer.daemon = True
+        timeout_timer.start()
         with state_lock:
             active_processes[job_id] = process
         if process.stdout is None:
@@ -321,18 +439,34 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
             metrics = progress_metrics(line)
             if metrics:
                 update_job(job_id, **metrics)
-        code = process.wait()
+                measured = int(metrics.get("total_bytes") or metrics.get("downloaded_bytes") or 0)
+                if MAX_FILE_BYTES and measured > MAX_FILE_BYTES:
+                    size_exceeded = True
+                    process.terminate()
+                    break
+        try:
+            code = process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            code = process.wait(timeout=5)
+        timeout_timer.cancel()
         with state_lock:
             was_cancelled = job_id in cancelled_jobs
         if was_cancelled:
             update_job(job_id, status="cancelled", error=None, speed_bytes_per_second=0.0)
             return
+        if timed_out:
+            raise RuntimeError("DOWNLOAD_TIMEOUT")
+        if size_exceeded:
+            raise RuntimeError("FILE_SIZE_LIMIT")
         if code != 0:
             raise RuntimeError("\n".join(tail)[-1500:] or "yt-dlp download failed")
         candidates = [p for p in DOWNLOAD_DIR.glob(f"{job_id}.*") if p.is_file() and p.suffix not in {".part", ".ytdl"}]
         if not candidates:
             raise RuntimeError("Download completed but no output file was produced")
         result_path = max(candidates, key=lambda p: p.stat().st_mtime)
+        if MAX_FILE_BYTES and result_path.stat().st_size > MAX_FILE_BYTES:
+            raise RuntimeError("FILE_SIZE_LIMIT")
         file_id = uuid.uuid4().hex
         with state_lock:
             files[file_id] = result_path
@@ -344,13 +478,25 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
         cleanup_job_files(job_id)
         logger.error("job=%s failed error=%s", job_id, detail)
     finally:
+        if timeout_timer is not None:
+            timeout_timer.cancel()
         with state_lock:
             active_processes.pop(job_id, None)
             cancelled_jobs.discard(job_id)
 
 
+async def run_queued_download(job_id: str, request: DownloadRequest) -> None:
+    async with download_slots:
+        with state_lock:
+            job = jobs.get(job_id)
+            if job is None or job.get("status") == "cancelled":
+                return
+        await asyncio.to_thread(execute_download, job_id, request)
+
+
 @app.post("/api/media/download", status_code=202)
 async def media_download(request: DownloadRequest) -> dict[str, str]:
+    cleanup_stale_data()
     free_bytes = shutil.disk_usage(DOWNLOAD_DIR).free
     if free_bytes < MIN_FREE_BYTES:
         raise HTTPException(status_code=507, detail="Máy chủ không đủ dung lượng trống để bắt đầu tải.")
@@ -364,7 +510,7 @@ async def media_download(request: DownloadRequest) -> dict[str, str]:
             "downloaded_bytes": 0, "total_bytes": None, "speed_bytes_per_second": None,
             "created_at": now, "updated_at": now,
         }
-    task = asyncio.create_task(asyncio.to_thread(execute_download, job_id, request))
+    task = asyncio.create_task(run_queued_download(job_id, request))
     active_tasks.add(task)
     task.add_done_callback(active_tasks.discard)
     return {"id": job_id, "status": "queued"}
@@ -372,6 +518,8 @@ async def media_download(request: DownloadRequest) -> dict[str, str]:
 
 @app.post("/api/jobs/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict[str, str]:
+    if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
     with state_lock:
         job = jobs.get(job_id)
         if job is None:
@@ -394,6 +542,8 @@ async def cancel_job(job_id: str) -> dict[str, str]:
 
 @app.get("/api/jobs/{job_id}")
 async def job_status(job_id: str) -> dict:
+    if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
     with state_lock:
         job = jobs.get(job_id)
         if job is None:
@@ -403,6 +553,8 @@ async def job_status(job_id: str) -> dict:
 
 @app.get("/api/files/{file_id}")
 async def get_file(file_id: str) -> FileResponse:
+    if not re.fullmatch(r"[0-9a-f]{32}", file_id):
+        raise HTTPException(status_code=404, detail="File not found")
     with state_lock:
         path = files.get(file_id)
     if path is None or not path.is_file() or path.parent.resolve() != DOWNLOAD_DIR.resolve():

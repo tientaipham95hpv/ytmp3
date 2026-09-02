@@ -12,4 +12,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 pytest -q
 ```
 
-Production deployments should put the API behind HTTPS, set `CORS_ORIGINS`, persist `/data`, limit request rates, and periodically expire old jobs/files.
+Production deployments should put the API behind HTTPS, set `CORS_ORIGINS`, persist `/data`, and limit request rates. Runtime limits are configurable:
+
+- `MAX_CONCURRENT_DOWNLOADS` (default `2`)
+- `MAX_DOWNLOAD_SECONDS` (default `7200`)
+- `MAX_DURATION_SECONDS` (default `14400`; `0` disables)
+- `MAX_FILE_BYTES` (default `8589934592`; `0` disables)
+- `TEMP_RETENTION_SECONDS` (default `86400`)
+- `MIN_FREE_BYTES` (default `536870912`)
+
+`GET /health` exposes queue and disk health. Authenticated `GET /api/jobs` lists current jobs and queue counts. Finished jobs and files are removed automatically after the configured retention period.

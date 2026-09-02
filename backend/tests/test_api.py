@@ -1,4 +1,6 @@
 import json
+import os
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -9,7 +11,26 @@ client = TestClient(main.app)
 
 
 def test_health():
-    assert client.get("/health").json() == {"status": "ok"}
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["max_concurrent_downloads"] >= 1
+    assert payload["free_bytes"] >= 0
+
+
+def test_job_queue_summary():
+    job_id = "b" * 32
+    main.jobs[job_id] = {
+        "id": job_id, "status": "queued", "created_at": main.utc_now(), "updated_at": main.utc_now()
+    }
+    try:
+        response = client.get("/api/jobs")
+        assert response.status_code == 200
+        assert response.json()["queued"] >= 1
+        assert response.json()["max_concurrent_downloads"] == main.MAX_CONCURRENT_DOWNLOADS
+    finally:
+        main.jobs.pop(job_id, None)
 
 
 def test_rejects_non_youtube_url():
@@ -145,3 +166,48 @@ def test_download_rejects_when_server_disk_is_low(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main.shutil, "disk_usage", lambda _: type("Usage", (), {"free": 99})())
     response = client.post("/api/media/download", json={"url": "https://youtu.be/abc", "media_type": "audio", "quality": "128"})
     assert response.status_code == 507
+
+
+def test_api_errors_include_stable_code_and_message():
+    response = client.get("/api/jobs/not-a-valid-job-id")
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "not_found"
+    assert response.json()["message"] == "Job not found"
+
+
+def test_file_endpoint_rejects_path_traversal():
+    response = client.get("/api/files/..%2F..%2Fetc%2Fpasswd")
+    assert response.status_code == 404
+
+
+def test_info_rejects_media_over_duration_limit(monkeypatch):
+    payload = {"id": "long", "title": "Long", "duration": 101}
+    monkeypatch.setattr(main, "MAX_DURATION_SECONDS", 100)
+    monkeypatch.setattr(main, "require_binary", lambda _: None)
+    monkeypatch.setattr(main, "run_command", lambda _: type("Result", (), {"returncode": 0, "stdout": json.dumps(payload), "stderr": ""})())
+    response = client.post("/api/media/info", json={"url": "https://youtu.be/long"})
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "invalid_request"
+
+
+def test_download_command_contains_configured_limits(monkeypatch):
+    monkeypatch.setattr(main, "MAX_DURATION_SECONDS", 3600)
+    monkeypatch.setattr(main, "MAX_FILE_BYTES", 123456)
+    request = main.DownloadRequest(url="https://youtu.be/abc", media_type="audio", quality="128")
+    command = main.build_download_command(request, "/tmp/out.%(ext)s")
+    assert command[command.index("--match-filter") + 1] == "duration <= 3600"
+    assert command[command.index("--max-filesize") + 1] == "123456"
+
+
+def test_cleanup_removes_stale_files_and_finished_jobs(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setattr(main, "TEMP_RETENTION_SECONDS", 60)
+    stale = tmp_path / "dead.part"
+    stale.write_text("old")
+    old = time.time() - 120
+    os.utime(stale, (old, old))
+    job_id = "a" * 32
+    main.jobs[job_id] = {"status": "failed", "updated_at": "2000-01-01T00:00:00+00:00"}
+    main.cleanup_stale_data()
+    assert not stale.exists()
+    assert job_id not in main.jobs
