@@ -24,6 +24,8 @@ jobs:
       - name: Build Release for iphoneos
         run: |
           set -euo pipefail
+          BUILD_LOG="$RUNNER_TEMP/xcodebuild.log"
+          set +e
           xcodebuild \
             -project OfflineTube/OfflineTube.xcodeproj \
             -scheme OfflineTube \
@@ -33,7 +35,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            clean build
+            clean build 2>&1 | tee "$BUILD_LOG"
+          RESULT=${PIPESTATUS[0]}
+          set -e
+          if [ "$RESULT" -ne 0 ]; then
+            grep -E '(^|: )(error:|fatal error:)' "$BUILD_LOG" | tail -n 20 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit "$RESULT"
+          fi
 
       - name: Package unsigned IPA
         run: |
