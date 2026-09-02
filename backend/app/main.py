@@ -171,7 +171,8 @@ async def protect_api(request, call_next):
     if token and request.url.path.startswith("/api/"):
         supplied = request.headers.get("authorization", "")
         if not secrets.compare_digest(supplied, f"Bearer {token}"):
-            return JSONResponse(status_code=401, content={"detail": "API access token is missing or invalid."})
+            message = "API access token is missing or invalid."
+            return JSONResponse(status_code=401, content={"detail": message, "error_code": "unauthorized", "message": message})
     return await call_next(request)
 
 

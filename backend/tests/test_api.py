@@ -127,7 +127,9 @@ def test_api_token_protects_api_routes(tmp_path: Path, monkeypatch):
     token_file = tmp_path / "token"
     token_file.write_text("secret-test-token")
     monkeypatch.setattr(main, "API_ACCESS_TOKEN_FILE", token_file)
-    assert client.post("/api/media/info", json={"url": "https://youtu.be/abc"}).status_code == 401
+    unauthorized = client.post("/api/media/info", json={"url": "https://youtu.be/abc"})
+    assert unauthorized.status_code == 401
+    assert unauthorized.json()["error_code"] == "unauthorized"
     response = client.post(
         "/api/media/info",
         json={"url": "https://example.com/x"},
