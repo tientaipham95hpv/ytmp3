@@ -274,20 +274,20 @@ final class DownloadViewModel: ObservableObject {
                 queueItems[failedIndex].backendJobID = nil
                 queueItems[failedIndex].state = .queued
                 queueItems[failedIndex].error = localized("Server restarted; recreating download job…", "Máy chủ vừa khởi động lại; đang tạo lại tác vụ tải…")
-                logger.warning("recovering missing backend job source=\(queueItems[failedIndex].info.id, privacy: .public)")
+                logger.warning("recovering missing backend job source=\(self.queueItems[failedIndex].info.id, privacy: .public)")
                 return
             }
             if isTransient(error), queueItems[failedIndex].retryCount < 5 {
                 queueItems[failedIndex].retryCount += 1
                 queueItems[failedIndex].state = .queued
                 queueItems[failedIndex].error = localized("Network interrupted. Retrying automatically…", "Mạng bị gián đoạn. Đang tự động thử lại…")
-                logger.warning("transient failure source=\(queueItems[failedIndex].info.id, privacy: .public) retry=\(queueItems[failedIndex].retryCount)")
+                logger.warning("transient failure source=\(self.queueItems[failedIndex].info.id, privacy: .public) retry=\(self.queueItems[failedIndex].retryCount)")
                 try? await Task.sleep(for: .seconds(10))
                 return
             }
             queueItems[failedIndex].state = .failed; queueItems[failedIndex].error = error.localizedDescription
             queueItems[failedIndex].speedBytesPerSecond = nil; errorMessage = error.localizedDescription
-            logger.error("failed source=\(queueItems[failedIndex].info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            logger.error("failed source=\(self.queueItems[failedIndex].info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
     }
 
