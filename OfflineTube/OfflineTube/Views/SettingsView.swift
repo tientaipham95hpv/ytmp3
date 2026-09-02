@@ -12,11 +12,13 @@ struct SettingsView: View {
     @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
     @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
     @AppStorage("backendURL") private var backendURL = "https://offlinetube.cineviet.live"
+    @AppStorage("lyricsProviderURL") private var lyricsProviderURL = ""
     @State private var resultMessage: String?
     @State private var accessToken = ""
     @State private var showCookieImporter = false
     @State private var isUpdatingCookies = false
     @State private var showCookieGuide = false
+    @State private var lyricsAPIKey = ""
 
     var body: some View {
         Form {
@@ -44,6 +46,15 @@ struct SettingsView: View {
                 TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                 Text("The current download service is preserved. Change this only when using another server.").font(.footnote).foregroundStyle(.secondary)
             }
+            Section("Lyrics Provider") {
+                TextField("Provider API URL", text: $lyricsProviderURL)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                SecureField("API key (optional)", text: $lyricsAPIKey)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Save Lyrics API Key") { saveLyricsKey() }
+                Text("Online search stays disabled until a provider URL is configured. The optional API key is stored in Keychain and never hardcoded in the app.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Section("Server Security") {
                 SecureField("Device access token", text: $accessToken)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -63,7 +74,7 @@ struct SettingsView: View {
             Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
         }
         .navigationTitle("Settings")
-        .task { accessToken = KeychainStore.token() ?? "" }
+        .task { accessToken = KeychainStore.token() ?? ""; lyricsAPIKey = KeychainStore.lyricsAPIKey() ?? "" }
         .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             updateCookies(from: url)
@@ -83,6 +94,13 @@ struct SettingsView: View {
         do {
             try KeychainStore.saveToken(accessToken.trimmingCharacters(in: .whitespacesAndNewlines))
             resultMessage = localized("Access token saved securely.", "Đã lưu token an toàn vào Keychain.")
+        } catch { resultMessage = error.localizedDescription }
+    }
+
+    private func saveLyricsKey() {
+        do {
+            try KeychainStore.saveLyricsAPIKey(lyricsAPIKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            resultMessage = localized("Lyrics provider settings saved.", "Đã lưu cấu hình nhà cung cấp lời bài hát.")
         } catch { resultMessage = error.localizedDescription }
     }
 

@@ -20,6 +20,9 @@ final class MediaItem {
     var fileSize: Int64 = 0
     var lastPlayedAt: Date?
     var playCount: Int = 0
+    var lyricsText: String? = nil
+    var lyricsFormat: String? = nil
+    var lyricsUpdatedAt: Date? = nil
 
     init(sourceID: String, sourceURL: String, title: String, channel: String, thumbnailURL: String?, duration: Double, localFilename: String, mediaType: String, quality: String) {
         self.id = UUID()
@@ -40,6 +43,9 @@ final class MediaItem {
         self.fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
         self.lastPlayedAt = nil
         self.playCount = 0
+        self.lyricsText = nil
+        self.lyricsFormat = nil
+        self.lyricsUpdatedAt = nil
     }
 
     var localURL: URL {

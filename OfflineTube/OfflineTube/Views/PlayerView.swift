@@ -7,6 +7,7 @@ struct PlayerView: View {
     @State private var sleepSheet = false
     @State private var showVideoFullscreen = false
     @State private var showQueue = false
+    @State private var selectedPage = 0
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -15,11 +16,22 @@ struct PlayerView: View {
                 ScrollView {
                     if let item = player.currentItem {
                         VStack(spacing: 24) {
-                            media(item, width: proxy.size.width)
-                            metadata(item)
-                            timeline
-                            transport
-                            secondaryControls
+                            if !item.isVideo {
+                                Picker("Player Section", selection: $selectedPage) {
+                                    Label("Player", systemImage: "play.circle").tag(0)
+                                    Label("Lyrics", systemImage: "quote.bubble").tag(1)
+                                }.pickerStyle(.segmented)
+                            }
+                            if selectedPage == 1 && !item.isVideo {
+                                metadata(item)
+                                LyricsView(item: item)
+                            } else {
+                                media(item, width: proxy.size.width)
+                                metadata(item)
+                                timeline
+                                transport
+                                secondaryControls
+                            }
                         }
                         .padding(.horizontal, 24).padding(.bottom, 28)
                         .frame(minHeight: proxy.size.height)

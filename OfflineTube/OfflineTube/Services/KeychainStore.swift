@@ -4,9 +4,18 @@ import Security
 enum KeychainStore {
     private static let service = "com.personal.OfflineTube"
     private static let account = "api-access-token"
+    private static let lyricsAccount = "lyrics-provider-api-key"
 
     static func saveToken(_ token: String) throws {
-        let data = Data(token.utf8)
+        try save(token, account: account)
+    }
+
+    static func saveLyricsAPIKey(_ key: String) throws {
+        try save(key, account: lyricsAccount)
+    }
+
+    private static func save(_ value: String, account: String) throws {
+        let data = Data(value.utf8)
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
         SecItemDelete(query as CFDictionary)
         var item = query
@@ -17,6 +26,14 @@ enum KeychainStore {
     }
 
     static func token() -> String? {
+        read(account: account)
+    }
+
+    static func lyricsAPIKey() -> String? {
+        read(account: lyricsAccount)
+    }
+
+    private static func read(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
