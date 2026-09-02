@@ -8,6 +8,7 @@ struct PlayerView: View {
     @State private var showVideoFullscreen = false
     @State private var showQueue = false
     @State private var selectedPage = 0
+    @State private var showAudioControls = false
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -56,6 +57,7 @@ struct PlayerView: View {
         }
         .sheet(isPresented: $sleepSheet) { SleepTimerSheet() }
         .sheet(isPresented: $showQueue) { UpNextSheet() }
+        .sheet(isPresented: $showAudioControls) { AudioControlsView() }
         .fullScreenCover(isPresented: $showVideoFullscreen) {
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
@@ -113,9 +115,9 @@ struct PlayerView: View {
     private var secondaryControls: some View {
         HStack {
             Button { player.toggleShuffle() } label: { Image(systemName: "shuffle").foregroundStyle(player.isShuffling ? Color.accentColor : .primary) }.frame(maxWidth: .infinity)
-            Menu {
-                ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { speed in Button("\(speed, specifier: "%g")×") { player.setSpeed(Float(speed)) } }
-            } label: { Text("\(player.playbackSpeed, specifier: "%g")×").font(.subheadline.bold()).frame(maxWidth: .infinity) }
+            Button { showAudioControls = true } label: {
+                VStack(spacing: 2) { Image(systemName: "slider.vertical.3"); Text("\(player.playbackSpeed, specifier: "%g")×").font(.caption2.bold()) }
+            }.frame(maxWidth: .infinity).accessibilityLabel("Audio Controls")
             Button { sleepSheet = true } label: { Image(systemName: player.sleepTimerEnd == nil ? "moon.zzz" : "moon.zzz.fill") }.frame(maxWidth: .infinity)
             Button { player.cycleRepeatMode() } label: {
                 Image(systemName: player.repeatMode.icon).foregroundStyle(player.repeatMode == .off ? .primary : Color.accentColor)
@@ -125,6 +127,87 @@ struct PlayerView: View {
 
     private var background: some View {
         LinearGradient(colors: [Color.accentColor.opacity(0.16), Color(.systemBackground)], startPoint: .top, endPoint: .center).ignoresSafeArea()
+    }
+}
+
+private struct AudioControlsView: View {
+    private enum EQPreset: String, CaseIterable, Identifiable {
+        case flat = "Flat", bass = "Bass Boost", treble = "Treble Boost", vocal = "Vocal", rock = "Rock", pop = "Pop"
+        var id: String { rawValue }
+        var gains: [CGFloat] {
+            switch self {
+            case .flat: [0, 0, 0, 0, 0, 0]
+            case .bass: [8, 6, 3, 0, -1, -2]
+            case .treble: [-2, -1, 0, 3, 6, 8]
+            case .vocal: [-2, 0, 4, 6, 3, 0]
+            case .rock: [5, 3, -1, 2, 5, 6]
+            case .pop: [-1, 3, 5, 4, 2, -1]
+            }
+        }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var player: PlayerManager
+    @State private var previewPreset = EQPreset.flat
+    private let speeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Playback Speed") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 72))], spacing: 10) {
+                        ForEach(speeds, id: \.self) { speed in
+                            Button { player.setSpeed(speed); Haptics.selection() } label: {
+                                Text("\(speed, specifier: "%g")×").font(.subheadline.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
+                            }
+                            .buttonStyle(.borderedProminent).tint(player.playbackSpeed == speed ? .accentColor : .secondary.opacity(0.25))
+                            .foregroundStyle(player.playbackSpeed == speed ? .white : .primary)
+                        }
+                    }.padding(.vertical, 4)
+                    Text("Uses AVPlayer spectral time-pitch processing to preserve voice and music quality.").font(.footnote).foregroundStyle(.secondary)
+                }
+
+                Section {
+                    Label("Realtime EQ needs AVAudioEngine", systemImage: "exclamationmark.shield.fill")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
+                    Text("OfflineTube keeps AVPlayer for video, Picture in Picture, background audio and Lock Screen reliability. Presets below are an interface preview and do not alter sound in this build.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+
+                Section("Equalizer Presets") {
+                    Picker("Preset Preview", selection: $previewPreset) {
+                        ForEach(EQPreset.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    equalizerPreview
+                    ForEach(EQPreset.allCases) { preset in
+                        HStack { Text(preset.rawValue); Spacer(); Text(preset == .flat ? "AVPlayer default" : "Requires Audio Engine").font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+
+                Section("Custom EQ") {
+                    ForEach(Array(["60", "250", "1K", "4K", "12K"].enumerated()), id: \.offset) { _, frequency in
+                        LabeledContent(frequency) { Slider(value: .constant(0.0), in: -12.0...12.0).disabled(true).frame(maxWidth: 210) }
+                    }
+                } footer: { Text("Disabled to avoid introducing a second audio pipeline that could desynchronize playback and remote controls.") }
+
+                Section("Balance & Normalization") {
+                    LabeledContent("Balance") { Slider(value: .constant(0.0), in: -1.0...1.0).disabled(true).frame(maxWidth: 180) }
+                    Toggle("Volume Normalization", isOn: .constant(false)).disabled(true)
+                } footer: { Text("AVPlayer does not expose realtime pan, multiband EQ, or loudness normalization. These controls require an AVAudioEngine migration.") }
+            }
+            .navigationTitle("Audio Controls").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }.presentationDetents([.large])
+    }
+
+    private var equalizerPreview: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ForEach(Array(previewPreset.gains.enumerated()), id: \.offset) { _, gain in
+                Capsule().fill(gain == 0 ? Color.secondary.opacity(0.3) : Color.accentColor)
+                    .frame(maxWidth: .infinity).frame(height: max(4, 28 + gain * 3))
+                    .animation(.snappy, value: previewPreset)
+            }
+        }.frame(height: 58).accessibilityLabel("Equalizer curve preview")
     }
 }
 

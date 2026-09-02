@@ -72,6 +72,7 @@ final class PlayerManager: ObservableObject {
             item.playCount += 1
             saveContext()
             let playerItem = AVPlayerItem(url: item.localURL)
+            playerItem.audioTimePitchAlgorithm = .spectral
             player.replaceCurrentItem(with: playerItem)
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             duration = item.duration
@@ -333,6 +334,7 @@ final class PlayerManager: ObservableObject {
         if !queue.contains(where: { $0.id == item.id }) { queue.insert(item, at: 0) }
         currentItem = item
         let playerItem = AVPlayerItem(url: item.localURL)
+        playerItem.audioTimePitchAlgorithm = .spectral
         player.replaceCurrentItem(with: playerItem)
         duration = item.duration
         currentTime = min(max(0, item.playbackPosition), max(item.duration, item.playbackPosition))
