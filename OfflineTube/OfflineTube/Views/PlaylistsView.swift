@@ -10,6 +10,12 @@ struct PlaylistsView: View {
 
     var body: some View {
         List {
+            Section("Smart Playlists") {
+                NavigationLink { SmartPlaylistDetail(kind: .recent, allItems: items) } label: { Label("Recently Added", systemImage: "clock.badge.checkmark") }
+                NavigationLink { SmartPlaylistDetail(kind: .mostPlayed, allItems: items) } label: { Label("Most Played", systemImage: "chart.bar.fill") }
+                NavigationLink { SmartPlaylistDetail(kind: .unfinished, allItems: items) } label: { Label("Unfinished", systemImage: "gauge.with.dots.needle.33percent") }
+                NavigationLink { SmartPlaylistDetail(kind: .favorites, allItems: items) } label: { Label("Favorites", systemImage: "heart.fill") }
+            }
             if playlists.isEmpty {
                 ContentUnavailableView("No Playlists", systemImage: "music.note.list", description: Text("Create a playlist to organize downloads."))
                     .listRowBackground(Color.clear)
@@ -42,6 +48,40 @@ struct PlaylistsView: View {
     private func create() {
         modelContext.insert(MediaPlaylist(name: name.trimmingCharacters(in: .whitespacesAndNewlines)))
         try? modelContext.save(); name = ""
+    }
+}
+
+private struct SmartPlaylistDetail: View {
+    enum Kind { case recent, mostPlayed, unfinished, favorites }
+    @EnvironmentObject private var player: PlayerManager
+    let kind: Kind
+    let allItems: [MediaItem]
+
+    private var title: LocalizedStringKey {
+        switch kind { case .recent: "Recently Added"; case .mostPlayed: "Most Played"; case .unfinished: "Unfinished"; case .favorites: "Favorites" }
+    }
+    private var items: [MediaItem] {
+        switch kind {
+        case .recent: Array(allItems.sorted { $0.createdAt > $1.createdAt }.prefix(50))
+        case .mostPlayed: allItems.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }
+        case .unfinished: allItems.filter { $0.playbackPosition > 10 && $0.playbackPosition < max(0, $0.duration - 10) }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
+        case .favorites: allItems.filter(\.isFavorite).sorted { $0.createdAt > $1.createdAt }
+        }
+    }
+
+    var body: some View {
+        List {
+            if items.isEmpty {
+                ContentUnavailableView("Nothing here yet", systemImage: "sparkles")
+            } else {
+                Section { Button { player.playAll(items) } label: { Label("Play All", systemImage: "play.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent) }
+                ForEach(items) { item in
+                    Button { player.play(item, queue: items) } label: {
+                        HStack { ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).frame(width: 64, height: 46); VStack(alignment: .leading) { Text(item.title).lineLimit(1); Text(item.channel).font(.caption).foregroundStyle(.secondary) }; Spacer(); ShareLink(item: item.localURL) { Image(systemName: "square.and.arrow.up") } }
+                    }.buttonStyle(.plain)
+                }
+            }
+        }.navigationTitle(title)
     }
 }
 

@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -14,6 +15,9 @@ struct SettingsView: View {
     @State private var storage: Int64 = 0
     @State private var confirmDeleteAll = false
     @State private var resultMessage: String?
+    @State private var accessToken = ""
+    @State private var showCookieImporter = false
+    @State private var isUpdatingCookies = false
 
     var body: some View {
         Form {
@@ -42,10 +46,27 @@ struct SettingsView: View {
                 TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                 Text("The current download service is preserved. Change this only when using another server.").font(.footnote).foregroundStyle(.secondary)
             }
+            Section("Server Security") {
+                SecureField("Device access token", text: $accessToken)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Save access token") { saveToken() }.disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    showCookieImporter = true
+                } label: {
+                    if isUpdatingCookies { HStack { ProgressView(); Text("Checking and updating cookies…") } }
+                    else { Label("Replace YouTube cookies", systemImage: "lock.doc") }
+                }.disabled(KeychainStore.token() == nil || isUpdatingCookies)
+                Text("The token stays in iOS Keychain. Cookie files are verified by the server before replacing the active cookie.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
         }
         .navigationTitle("Settings")
-        .task { refreshStorage() }
+        .task { refreshStorage(); accessToken = KeychainStore.token() ?? "" }
+        .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            updateCookies(from: url)
+        }
         .confirmationDialog("Delete every downloaded file?", isPresented: $confirmDeleteAll, titleVisibility: .visible) {
             Button("Delete All", role: .destructive) { deleteAll() }
             Button("Cancel", role: .cancel) {}
@@ -66,4 +87,27 @@ struct SettingsView: View {
     }
 
     private func localized(_ english: String, _ vietnamese: String) -> String { language == AppLanguage.vietnamese.rawValue ? vietnamese : english }
+
+    private func saveToken() {
+        do {
+            try KeychainStore.saveToken(accessToken.trimmingCharacters(in: .whitespacesAndNewlines))
+            resultMessage = localized("Access token saved securely.", "Đã lưu token an toàn vào Keychain.")
+        } catch { resultMessage = error.localizedDescription }
+    }
+
+    private func updateCookies(from url: URL) {
+        isUpdatingCookies = true
+        Task {
+            defer { isUpdatingCookies = false }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                guard let contents = String(data: data, encoding: .utf8) else { throw APIError.invalidResponse }
+                let response = try await APIClient.shared.updateYouTubeCookies(contents)
+                resultMessage = response.message ?? localized("Cookies updated.", "Đã cập nhật cookie.")
+                Haptics.success()
+            } catch { resultMessage = error.localizedDescription }
+        }
+    }
 }

@@ -47,6 +47,7 @@ final class PlayerManager: ObservableObject {
         if currentItem?.id != item.id {
             currentItem = item
             item.lastPlayedAt = Date()
+            item.playCount += 1
             let playerItem = AVPlayerItem(url: item.localURL)
             player.replaceCurrentItem(with: playerItem)
             duration = item.duration

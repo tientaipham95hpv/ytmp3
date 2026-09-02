@@ -1,6 +1,8 @@
 import SwiftUI
+import SwiftData
 
 struct RootView: View {
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
     @StateObject private var downloads = DownloadViewModel()
     @AppStorage("appTheme") private var theme = AppTheme.system.rawValue
@@ -24,6 +26,7 @@ struct RootView: View {
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(3)
         }
         .environmentObject(downloads)
+        .task { downloads.attach(modelContext: modelContext) }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if player.currentItem != nil { MiniPlayerView { showPlayer = true } }
         }

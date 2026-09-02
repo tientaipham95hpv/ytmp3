@@ -18,6 +18,7 @@ final class MediaItem {
     var isFavorite: Bool = false
     var fileSize: Int64 = 0
     var lastPlayedAt: Date?
+    var playCount: Int = 0
 
     init(sourceID: String, sourceURL: String, title: String, channel: String, thumbnailURL: String?, duration: Double, localFilename: String, mediaType: String, quality: String) {
         self.id = UUID()
@@ -36,6 +37,7 @@ final class MediaItem {
         let path = FileStore.downloadsDirectory.appendingPathComponent(localFilename).path
         self.fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.int64Value ?? 0
         self.lastPlayedAt = nil
+        self.playCount = 0
     }
 
     var localURL: URL {

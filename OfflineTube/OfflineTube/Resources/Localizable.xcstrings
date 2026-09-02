@@ -89,7 +89,18 @@
     "Video" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Video" } } } },
     "Vietnamese" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tiếng Việt" } } } },
     "Your Library is empty" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thư viện đang trống" } } } },
-    "Your music, offline." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Âm nhạc của bạn, luôn bên bạn." } } } }
+    "Your music, offline." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Âm nhạc của bạn, luôn bên bạn." } } } },
+    "Checking and updating cookies…" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đang kiểm tra và cập nhật cookie…" } } } },
+    "Device access token" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Token truy cập thiết bị" } } } },
+    "Most Played" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Phát nhiều nhất" } } } },
+    "Recently Added" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mới thêm gần đây" } } } },
+    "Replace YouTube cookies" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thay cookie YouTube" } } } },
+    "Save access token" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Lưu token truy cập" } } } },
+    "Server Security" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bảo mật máy chủ" } } } },
+    "Share / Export" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chia sẻ / Xuất tệp" } } } },
+    "Smart Playlists" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Playlist thông minh" } } } },
+    "The token stays in iOS Keychain. Cookie files are verified by the server before replacing the active cookie." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Token được giữ trong Keychain iOS. Máy chủ kiểm tra file cookie trước khi thay cookie đang dùng." } } } },
+    "Unfinished" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa nghe xong" } } } }
   },
   "version" : "1.0"
 }

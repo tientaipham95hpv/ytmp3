@@ -3,8 +3,8 @@ import Foundation
 import SwiftData
 import SwiftUI
 
-struct DownloadQueueItem: Identifiable {
-    enum State: String {
+struct DownloadQueueItem: Identifiable, Codable {
+    enum State: String, Codable {
         case queued, downloading, saving, completed, failed, cancelled
         var title: LocalizedStringKey {
             switch self {
@@ -56,7 +56,9 @@ final class DownloadViewModel: ObservableObject {
     @Published var statusText = ""
     @Published var errorMessage: String?
     @Published var completedMessage: String?
-    @Published private(set) var queueItems: [DownloadQueueItem] = []
+    @Published private(set) var queueItems: [DownloadQueueItem] = [] {
+        didSet { persistQueue() }
+    }
 
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
@@ -64,7 +66,21 @@ final class DownloadViewModel: ObservableObject {
     private let maximumConcurrentDownloads = 2
     private var modelContext: ModelContext?
 
-    init() { quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original" }
+    init() {
+        quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
+        if let data = try? Data(contentsOf: queueFileURL),
+           var saved = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) {
+            for index in saved.indices where saved[index].state == .downloading || saved[index].state == .saving {
+                saved[index].state = .queued
+            }
+            queueItems = saved
+        }
+    }
+
+    func attach(modelContext: ModelContext) {
+        self.modelContext = modelContext
+        startWorkersIfNeeded()
+    }
 
     func fetchInfo() async {
         let value = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -144,7 +160,12 @@ final class DownloadViewModel: ObservableObject {
         isDownloading = true; errorMessage = nil; completedMessage = nil; progress = 0; statusText = localized("Creating job…", "Đang tạo tác vụ…")
         do {
             let snapshot = queueItems[index]
-            let created = try await APIClient.shared.createDownload(url: snapshot.url, mediaType: snapshot.mediaType, quality: snapshot.quality)
+            let created: JobCreated
+            if let existingJobID = snapshot.backendJobID {
+                created = JobCreated(id: existingJobID, status: "downloading")
+            } else {
+                created = try await APIClient.shared.createDownload(url: snapshot.url, mediaType: snapshot.mediaType, quality: snapshot.quality)
+            }
             guard let createdIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[createdIndex].state != .cancelled else {
                 _ = try? await APIClient.shared.cancelJob(id: created.id); return
             }
@@ -185,5 +206,23 @@ final class DownloadViewModel: ObservableObject {
 
     private func localized(_ english: String, _ vietnamese: String) -> String {
         UserDefaults.standard.string(forKey: "appLanguage") == AppLanguage.vietnamese.rawValue ? vietnamese : english
+    }
+
+    private var queueFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OfflineTube", isDirectory: true)
+            .appendingPathComponent("download-queue.json")
+    }
+
+    private func persistQueue() {
+        let url = queueFileURL
+        let snapshot = queueItems
+        Task.detached(priority: .utility) {
+            do {
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                let data = try JSONEncoder().encode(snapshot)
+                try data.write(to: url, options: .atomic)
+            } catch { print("Queue persistence failed: \(error.localizedDescription)") }
+        }
     }
 }

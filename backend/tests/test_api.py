@@ -91,3 +91,29 @@ def test_progress_metrics_uses_estimated_total():
 def test_file_endpoint_is_not_guessable(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main, "DOWNLOAD_DIR", tmp_path)
     assert client.get("/api/files/missing").status_code == 404
+
+
+def test_api_token_protects_api_routes(tmp_path: Path, monkeypatch):
+    token_file = tmp_path / "token"
+    token_file.write_text("secret-test-token")
+    monkeypatch.setattr(main, "API_ACCESS_TOKEN_FILE", token_file)
+    assert client.post("/api/media/info", json={"url": "https://youtu.be/abc"}).status_code == 401
+    response = client.post(
+        "/api/media/info",
+        json={"url": "https://example.com/x"},
+        headers={"Authorization": "Bearer secret-test-token"},
+    )
+    assert response.status_code == 422
+
+
+def test_cookie_validation_accepts_netscape_youtube_cookie():
+    main.validate_cookie_text("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tvalue\n")
+
+
+def test_cookie_validation_rejects_wrong_domain():
+    try:
+        main.validate_cookie_text("# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tTRUE\t0\tSID\tvalue\n")
+    except main.HTTPException as exc:
+        assert exc.status_code == 422
+    else:
+        raise AssertionError("Expected cookie validation to fail")

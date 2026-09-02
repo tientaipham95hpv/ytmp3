@@ -132,6 +132,7 @@ struct LibraryView: View {
             Label { Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite")) } icon: { Image(systemName: item.isFavorite ? "heart.slash" : "heart") }
         }
         Button { playlistTarget = item } label: { Label("Add to Playlist", systemImage: "text.badge.plus") }
+        ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
         Divider()
         Button(role: .destructive) { delete(item) } label: { Label("Delete Download", systemImage: "trash") }
     }

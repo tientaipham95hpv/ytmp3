@@ -4,8 +4,10 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +17,7 @@ from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 DATA_DIR = Path(os.getenv("OFFLINETUBE_DATA_DIR", Path(__file__).resolve().parents[1] / "data"))
@@ -30,9 +32,10 @@ cancelled_jobs: set[str] = set()
 state_lock = Lock()
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 YOUTUBE_COOKIES_FILE = Path(os.getenv("YOUTUBE_COOKIES_FILE", "/run/secrets/youtube-cookies.txt"))
+API_ACCESS_TOKEN_FILE = Path(os.getenv("API_ACCESS_TOKEN_FILE", "/run/secrets/api-access-token.txt"))
 
 
-def yt_dlp_common_args() -> list[str]:
+def yt_dlp_common_args(cookie_file: Path | None = None) -> list[str]:
     args = [
         "--js-runtimes", "deno",
         "--remote-components", "ejs:github",
@@ -43,8 +46,9 @@ def yt_dlp_common_args() -> list[str]:
         "--retry-sleep", "fragment:linear=1:5:3",
         "--sleep-requests", "1",
     ]
-    if YOUTUBE_COOKIES_FILE.is_file() and YOUTUBE_COOKIES_FILE.stat().st_size > 0:
-        args += ["--cookies", str(YOUTUBE_COOKIES_FILE)]
+    selected_cookie = cookie_file or YOUTUBE_COOKIES_FILE
+    if selected_cookie.is_file() and selected_cookie.stat().st_size > 0:
+        args += ["--cookies", str(selected_cookie)]
     return args
 
 
@@ -80,6 +84,16 @@ class DownloadRequest(URLRequest):
         return self
 
 
+class CookieUpdateRequest(BaseModel):
+    cookies: str = Field(min_length=20, max_length=262_144)
+    test_url: str = "https://youtu.be/PjZxlhMwWZk"
+
+    @field_validator("test_url")
+    @classmethod
+    def validate_test_url(cls, value: str) -> str:
+        return URLRequest(url=value).url
+
+
 app = FastAPI(title="OfflineTube API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -88,6 +102,23 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+def configured_api_token() -> str | None:
+    if not API_ACCESS_TOKEN_FILE.is_file():
+        return None
+    value = API_ACCESS_TOKEN_FILE.read_text().strip()
+    return value or None
+
+
+@app.middleware("http")
+async def protect_api(request, call_next):
+    token = configured_api_token()
+    if token and request.url.path.startswith("/api/"):
+        supplied = request.headers.get("authorization", "")
+        if not secrets.compare_digest(supplied, f"Bearer {token}"):
+            return JSONResponse(status_code=401, content={"detail": "API access token is missing or invalid."})
+    return await call_next(request)
 
 
 def require_binary(name: str) -> None:
@@ -320,3 +351,44 @@ async def get_file(file_id: str) -> FileResponse:
     if path is None or not path.is_file() or path.parent.resolve() != DOWNLOAD_DIR.resolve():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+def validate_cookie_text(value: str) -> None:
+    lines = value.splitlines()
+    first_line = lines[0].strip() if lines else ""
+    if first_line not in {"# Netscape HTTP Cookie File", "# HTTP Cookie File"}:
+        raise HTTPException(status_code=422, detail="Cookie phải ở định dạng Netscape HTTP Cookie File.")
+    valid_row = False
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 7 and parts[0].lstrip(".").endswith("youtube.com"):
+            valid_row = True
+            break
+    if not valid_row:
+        raise HTTPException(status_code=422, detail="Không tìm thấy cookie youtube.com hợp lệ.")
+
+
+@app.post("/api/admin/youtube-cookies")
+async def update_youtube_cookies(request: CookieUpdateRequest) -> dict[str, str]:
+    validate_cookie_text(request.cookies)
+    YOUTUBE_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(prefix=".youtube-cookies-", dir=YOUTUBE_COOKIES_FILE.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "w") as stream:
+            stream.write(request.cookies)
+        temporary.chmod(0o600)
+        result = await asyncio.to_thread(
+            run_command,
+            ["yt-dlp", *yt_dlp_common_args(temporary), "--dump-single-json", "--no-playlist", "--skip-download", request.test_url],
+        )
+        if result.returncode != 0:
+            _, detail = _friendly_error(result.stderr)
+            raise HTTPException(status_code=422, detail=f"Cookie mới không vượt qua kiểm tra YouTube: {detail}")
+        os.replace(temporary, YOUTUBE_COOKIES_FILE)
+        YOUTUBE_COOKIES_FILE.chmod(0o600)
+        return {"status": "updated", "message": "YouTube cookie đã được cập nhật và kiểm tra thành công."}
+    finally:
+        temporary.unlink(missing_ok=True)

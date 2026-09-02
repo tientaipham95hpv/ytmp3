@@ -19,6 +19,8 @@ struct JobCreated: Codable, Sendable {
     let status: String
 }
 
+struct ServerMessage: Codable, Sendable { let status: String; let message: String? }
+
 struct DownloadJob: Codable, Sendable {
     let id: String
     let status: String
@@ -75,9 +77,14 @@ actor APIClient {
         return baseURL.appendingPathComponent(path)
     }
 
+    private func authorize(_ request: inout URLRequest) {
+        if let token = KeychainStore.token(), !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+    }
+
     private func request<T: Decodable, Body: Encodable>(_ path: String, method: String = "POST", body: Body) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
         request.httpMethod = method
+        authorize(&request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
         request.httpBody = try encoder.encode(body)
@@ -88,7 +95,9 @@ actor APIClient {
     }
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        let (data, response) = try await session.data(from: try endpoint(path))
+        var request = URLRequest(url: try endpoint(path))
+        authorize(&request)
+        let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -97,6 +106,7 @@ actor APIClient {
     private func post<T: Decodable>(_ path: String) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
         request.httpMethod = "POST"
+        authorize(&request)
         request.timeoutInterval = 30
         let (data, response) = try await session.data(for: request)
         try validate(response: response, data: data)
@@ -132,8 +142,15 @@ actor APIClient {
         try await post("api/jobs/\(id)/cancel")
     }
 
+    func updateYouTubeCookies(_ contents: String) async throws -> ServerMessage {
+        struct Body: Encodable { let cookies: String }
+        return try await request("api/admin/youtube-cookies", body: Body(cookies: contents))
+    }
+
     func download(fileID: String, filename: String) async throws -> URL {
-        let (temporaryURL, response) = try await session.download(from: try endpoint("api/files/\(fileID)"))
+        var request = URLRequest(url: try endpoint("api/files/\(fileID)"))
+        authorize(&request)
+        let (temporaryURL, response) = try await session.download(for: request)
         try validate(response: response, data: Data())
         let destination = FileStore.destination(filename: filename)
         do {
