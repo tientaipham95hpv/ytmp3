@@ -135,7 +135,15 @@
     "Files, Library metadata and playlist references will be removed." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "File, dữ liệu Thư viện và liên kết playlist sẽ bị xóa." } } } },
     "Clear artwork cache?" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa bộ nhớ đệm ảnh bìa?" } } } },
     "Clear Cache" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xóa bộ nhớ đệm" } } } },
-    "Artwork can be downloaded again when the device is online." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ảnh bìa có thể được tải lại khi thiết bị có mạng." } } } }
+    "Artwork can be downloaded again when the device is online." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ảnh bìa có thể được tải lại khi thiết bị có mạng." } } } },
+    "Estimated size" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Dung lượng ước tính" } } } },
+    "Already in Library at this format and quality" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đã có trong Thư viện với định dạng và chất lượng này" } } } },
+    "Another version is in Library. You can download this variant." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thư viện đã có phiên bản khác. Bạn vẫn có thể tải biến thể này." } } } },
+    "remaining" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "còn lại" } } } },
+    "Cancel this nearly completed download?" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hủy bản tải sắp hoàn tất?" } } } },
+    "Cancel Download" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Hủy tải xuống" } } } },
+    "Keep Downloading" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tiếp tục tải" } } } },
+    "Most of the file has already downloaded." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Phần lớn file đã được tải xuống." } } } }
   },
   "version" : "1.0"
 }

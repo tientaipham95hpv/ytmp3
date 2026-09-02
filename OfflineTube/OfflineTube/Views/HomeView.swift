@@ -112,7 +112,7 @@ struct HomeView: View {
                 }.pickerStyle(.menu)
             }
             if let estimate = downloads.estimatedSize(for: info) {
-                Label("Estimated size: \(estimate.formattedBytes)", systemImage: "internaldrive")
+                HStack { Image(systemName: "internaldrive"); Text("Estimated size"); Text(estimate.formattedBytes) }
                     .font(.caption).foregroundStyle(.secondary)
             }
             if downloads.variantExists(in: items, info: info) {

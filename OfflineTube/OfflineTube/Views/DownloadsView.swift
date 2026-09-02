@@ -64,7 +64,7 @@ struct DownloadsView: View {
                     Text(byteSummary(item)).lineLimit(1)
                     Spacer()
                     if let speed = item.speedBytesPerSecond, speed > 0 { Text("\(Int64(speed).formattedBytes)/s") }
-                    if let remaining = item.remainingSeconds { Text("\(remaining.remainingTime) left") }
+                    if let remaining = item.remainingSeconds { Text(remaining.remainingTime); Text("remaining") }
                     Text("\(Int(item.progress * 100))%")
                 }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
