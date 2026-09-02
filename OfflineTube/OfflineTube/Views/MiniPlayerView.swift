@@ -19,12 +19,16 @@ struct MiniPlayerView: View {
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.buttonStyle(.plain)
                     Button { player.toggle(); Haptics.tap() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.title3).frame(width: 32, height: 42) }
-                    Button { player.next() } label: { Image(systemName: "forward.fill").frame(width: 30, height: 42) }
+                        .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+                    Button { player.next(); Haptics.selection() } label: { Image(systemName: "forward.fill").frame(width: 30, height: 42) }
+                        .accessibilityLabel("Next")
                 }.padding(.horizontal, 12).padding(.vertical, 6)
             }
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .padding(.horizontal, 8).padding(.bottom, 2)
             .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            .accessibilityElement(children: .contain)
+            .accessibilityHint("Opens Now Playing")
         }
     }
 }

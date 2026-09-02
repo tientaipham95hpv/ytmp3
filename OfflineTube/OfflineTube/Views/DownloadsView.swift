@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DownloadsView: View {
     @EnvironmentObject private var downloads: DownloadViewModel
+    @EnvironmentObject private var network: NetworkMonitor
     @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
     @State private var pendingCancel: DownloadQueueItem?
 
@@ -11,6 +12,12 @@ struct DownloadsView: View {
 
     var body: some View {
         List {
+            if !network.isConnected {
+                Section {
+                    Label("Offline — active downloads will retry when the network returns", systemImage: "wifi.slash")
+                        .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
             if !active.isEmpty {
                 Section("Queue") { ForEach(active) { downloadRow($0) } }
             }
@@ -26,11 +33,12 @@ struct DownloadsView: View {
                         HStack(spacing: 12) {
                             ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 72, height: 50)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                Text("\(item.mediaType.capitalized) • \(item.quality) • \(size(item).formattedBytes)").font(.caption).foregroundStyle(.secondary)
+                                Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                                Text("\(item.mediaType.capitalized) • \(item.quality) • \(size(item).formattedBytes)").font(.caption).foregroundStyle(.secondary).lineLimit(2)
                             }
                             Spacer(); Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                         }.padding(.vertical, 3)
+                            .contextMenu { ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") } }
                     }
                 }
             }
@@ -55,7 +63,7 @@ struct DownloadsView: View {
                 if item.state == .queued || item.state == .downloading || item.state == .saving {
                     Button { cancel(item) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).font(.title3) }.buttonStyle(.plain)
                 } else if item.state == .failed || item.state == .cancelled {
-                    Button { downloads.retry(item.id) } label: { Image(systemName: "arrow.clockwise.circle.fill").font(.title3) }.buttonStyle(.plain)
+                    Button { downloads.retry(item.id); Haptics.selection() } label: { Image(systemName: "arrow.clockwise.circle.fill").font(.title3) }.buttonStyle(.plain).accessibilityLabel("Retry Download")
                 }
             }
             if item.state == .downloading || item.state == .saving {
@@ -70,6 +78,20 @@ struct DownloadsView: View {
             }
             if let error = item.error { Text(error).font(.caption).foregroundStyle(.red).lineLimit(3) }
         }.padding(.vertical, 5)
+            .contextMenu {
+                if item.state == .failed || item.state == .cancelled {
+                    Button { downloads.retry(item.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
+                } else if item.state == .queued || item.state == .downloading || item.state == .saving {
+                    Button(role: .destructive) { cancel(item) } label: { Label("Cancel Download", systemImage: "xmark.circle") }
+                }
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                if item.state == .failed || item.state == .cancelled {
+                    Button { downloads.retry(item.id); Haptics.selection() } label: { Label("Retry", systemImage: "arrow.clockwise") }.tint(.accentColor)
+                } else if item.state == .queued || item.state == .downloading || item.state == .saving {
+                    Button(role: .destructive) { cancel(item) } label: { Label("Cancel", systemImage: "xmark") }
+                }
+            }
     }
 
     private func byteSummary(_ item: DownloadQueueItem) -> String {

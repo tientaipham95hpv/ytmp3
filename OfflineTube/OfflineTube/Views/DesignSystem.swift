@@ -1,6 +1,13 @@
 import SwiftUI
 import UIKit
 
+enum AppMetrics {
+    static let page: CGFloat = 18
+    static let section: CGFloat = 24
+    static let card: CGFloat = 18
+    static let compactCard: CGFloat = 12
+}
+
 enum AppTheme: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
@@ -60,6 +67,12 @@ struct ArtworkView: View {
         .background(Color.secondary.opacity(0.08))
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(isVideo ? "Video artwork" : "Audio artwork")
     }
 
     private func artwork(_ image: Image) -> some View {
@@ -71,8 +84,56 @@ struct ArtworkView: View {
     }
 
     private var placeholder: some View {
-        LinearGradient(colors: [.accentColor.opacity(0.35), .secondary.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
-            .overlay { Image(systemName: isVideo ? "play.rectangle.fill" : "music.note").font(.title).foregroundStyle(.white.opacity(0.8)) }
+        LinearGradient(colors: [.accentColor.opacity(0.42), .secondary.opacity(0.1)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .overlay {
+                ZStack {
+                    Circle().fill(.ultraThinMaterial).frame(width: 54, height: 54)
+                    Image(systemName: isVideo ? "play.rectangle.fill" : "music.note")
+                        .font(.title2.weight(.semibold)).foregroundStyle(.white.opacity(0.9))
+                }
+            }
+    }
+}
+
+struct AppStateView: View {
+    let title: LocalizedStringKey
+    let message: LocalizedStringKey
+    let icon: String
+    var actionTitle: LocalizedStringKey?
+    var action: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 36, weight: .semibold)).foregroundStyle(.tint)
+                .frame(width: 72, height: 72).background(.tint.opacity(0.12), in: Circle())
+            Text(title).font(.title3.bold()).multilineTextAlignment(.center)
+            Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            if let actionTitle, let action {
+                Button(action: action) { Label(actionTitle, systemImage: "arrow.clockwise") }
+                    .buttonStyle(.borderedProminent).padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 32).padding(.horizontal, 24)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+struct SkeletonRow: View {
+    @State private var pulse = false
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: AppMetrics.compactCard).fill(.quaternary).frame(width: 76, height: 54)
+            VStack(alignment: .leading, spacing: 8) {
+                RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(maxWidth: 220).frame(height: 14)
+                RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(maxWidth: 130).frame(height: 11)
+            }
+        }
+        .opacity(pulse ? 0.45 : 0.85)
+        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: pulse)
+        .onAppear { pulse = true }
+        .accessibilityHidden(true)
     }
 }
 
@@ -112,5 +173,7 @@ extension Double {
 
 enum Haptics {
     static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    static func selection() { UISelectionFeedbackGenerator().selectionChanged() }
+    static func warning() { UINotificationFeedbackGenerator().notificationOccurred(.warning) }
     static func success() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
 }

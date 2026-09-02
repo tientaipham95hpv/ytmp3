@@ -7,6 +7,7 @@ struct PlayerView: View {
     @State private var sleepSheet = false
     @State private var showVideoFullscreen = false
     @State private var showQueue = false
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         NavigationStack {
@@ -30,9 +31,14 @@ struct PlayerView: View {
                 .background(background)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button { dismiss() } label: { Image(systemName: "chevron.down").font(.headline) } }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        if let onClose { onClose() } else { dismiss() }
+                    } label: { Image(systemName: "chevron.down").font(.headline) }
+                    .accessibilityLabel("Close Player")
+                }
                 ToolbarItem(placement: .principal) { Text("Now Playing").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary) }
-                ToolbarItem(placement: .topBarTrailing) { Button { showQueue = true } label: { Image(systemName: "text.line.first.and.arrowtriangle.forward") } }
+                ToolbarItem(placement: .topBarTrailing) { Button { showQueue = true; Haptics.selection() } label: { Image(systemName: "text.line.first.and.arrowtriangle.forward") }.accessibilityLabel("Up Next") }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
         }
@@ -62,8 +68,8 @@ struct PlayerView: View {
 
     private func metadata(_ item: MediaItem) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(item.title).font(.title2.bold()).lineLimit(2)
-            Text(item.channel).font(.title3).foregroundStyle(.tint).lineLimit(1)
+            Text(item.title).font(.title2.bold()).lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            Text(item.channel).font(.title3).foregroundStyle(.tint).lineLimit(2)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -76,13 +82,20 @@ struct PlayerView: View {
     }
 
     private var transport: some View {
-        HStack(spacing: 28) {
-            Button { player.skip(by: -10) } label: { Image(systemName: "gobackward.10") }
-            Button { player.previous() } label: { Image(systemName: "backward.fill") }
+        ViewThatFits(in: .horizontal) {
+        HStack(spacing: 28) { transportButtons }
+        HStack(spacing: 18) { transportButtons }
+        }
+        .font(.title2).buttonStyle(.plain)
+    }
+
+    @ViewBuilder private var transportButtons: some View {
+            Button { player.skip(by: -10); Haptics.selection() } label: { Image(systemName: "gobackward.10") }.accessibilityLabel("Back 10 seconds")
+            Button { player.previous(); Haptics.selection() } label: { Image(systemName: "backward.fill") }.accessibilityLabel("Previous")
             Button { player.toggle(); Haptics.tap() } label: { Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 68)) }
-            Button { player.next() } label: { Image(systemName: "forward.fill") }
-            Button { player.skip(by: 10) } label: { Image(systemName: "goforward.10") }
-        }.font(.title2).buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+            Button { player.next(); Haptics.selection() } label: { Image(systemName: "forward.fill") }.accessibilityLabel("Next")
+            Button { player.skip(by: 10); Haptics.selection() } label: { Image(systemName: "goforward.10") }.accessibilityLabel("Forward 10 seconds")
     }
 
     private var secondaryControls: some View {

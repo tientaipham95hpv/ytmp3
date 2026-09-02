@@ -26,6 +26,7 @@ struct HomeView: View {
                 }
                 pasteCard
                 if downloads.isLoadingInfo { metadataSkeleton }
+                if let error = downloads.errorMessage { errorState(error) }
                 if let info = downloads.mediaInfo { mediaCard(info) }
                 mediaSection("Recent Downloads", items: Array(items.prefix(8)))
                 mediaSection("Recently Played", items: Array(recentlyPlayed.prefix(8)))
@@ -45,9 +46,6 @@ struct HomeView: View {
                 Button("Done") { isURLFocused = false }
             }
         }
-        .alert("OfflineTube", isPresented: Binding(get: { downloads.errorMessage != nil }, set: { if !$0 { downloads.errorMessage = nil } })) {
-            Button("OK", role: .cancel) { downloads.errorMessage = nil }
-        } message: { Text(downloads.errorMessage ?? "Unknown error") }
     }
 
     private var greeting: some View {
@@ -81,19 +79,22 @@ struct HomeView: View {
             .buttonStyle(.borderedProminent).controlSize(.large)
             .disabled(!network.isConnected || downloads.isLoadingInfo || downloads.urlText.trimmingCharacters(in: .whitespaces).isEmpty)
         }
-        .padding(18)
+        .padding(AppMetrics.card)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .accessibilityElement(children: .contain)
     }
 
     private var metadataSkeleton: some View {
-        HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 12).fill(.quaternary).frame(width: 126, height: 78)
-            VStack(alignment: .leading, spacing: 10) {
-                RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(height: 14)
-                RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(width: 120, height: 12)
-            }
+        SkeletonRow().padding(16)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.card, style: .continuous))
+    }
+
+    private func errorState(_ error: String) -> some View {
+        AppStateView(title: "Couldn’t load this link", message: LocalizedStringKey(error), icon: "exclamationmark.triangle.fill", actionTitle: "Retry") {
+            downloads.errorMessage = nil
+            fetchInfo()
         }
-        .redacted(reason: .placeholder).shimmering()
+        .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: AppMetrics.card, style: .continuous))
     }
 
     private func mediaCard(_ info: MediaInfo) -> some View {
@@ -148,10 +149,14 @@ struct HomeView: View {
                             Button { player.play(item, queue: items) } label: {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 190, height: 110)
-                                    Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                                    Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                                    Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                 }.frame(width: 190, alignment: .leading)
                             }.buttonStyle(.plain)
+                                .contextMenu {
+                                    Button { player.play(item, queue: items) } label: { Label("Play", systemImage: "play.fill") }
+                                    ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
+                                }
                         }
                     }
                 }
@@ -164,8 +169,4 @@ struct HomeView: View {
         Haptics.tap()
         Task { await downloads.fetchInfo() }
     }
-}
-
-private extension View {
-    func shimmering() -> some View { opacity(0.72) }
 }

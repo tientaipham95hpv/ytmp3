@@ -19,6 +19,7 @@ struct RootView: View {
     private var accentColor: Color { (AccentChoice(rawValue: accent) ?? .pink).color }
 
     var body: some View {
+        ZStack {
         VStack(spacing: 0) {
             if !network.isConnected {
                 Label("Offline — local Library and playback are available", systemImage: "wifi.slash")
@@ -37,6 +38,12 @@ struct RootView: View {
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(3)
         }
         }
+        if showPlayer {
+            PlayerView(onClose: { withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) { showPlayer = false } })
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(10)
+        }
+        }
         .environmentObject(downloads)
         .environmentObject(network)
         .task {
@@ -46,9 +53,14 @@ struct RootView: View {
             reconcileOfflineLibrary()
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if player.currentItem != nil { MiniPlayerView { showPlayer = true } }
+            if player.currentItem != nil && !showPlayer {
+                MiniPlayerView {
+                    Haptics.selection()
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) { showPlayer = true }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
-        .fullScreenCover(isPresented: $showPlayer) { PlayerView() }
         .preferredColorScheme(selectedTheme.colorScheme)
         .environment(\.locale, Locale(identifier: language))
         .tint(accentColor)
@@ -70,6 +82,7 @@ struct RootView: View {
             }
         }
         .animation(.snappy, value: downloads.completedMessage)
+        .onChange(of: selectedTab) { _, _ in Haptics.selection() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { reconcileOfflineLibrary() }
             else if phase == .inactive || phase == .background { player.savePlaybackState() }

@@ -29,6 +29,9 @@ struct PlaylistsView: View {
                             }
                         } icon: { Image(systemName: "music.note.list").frame(width: 42, height: 42).background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 10)) }
                     }
+                    .contextMenu {
+                        Button(role: .destructive) { modelContext.delete(playlist); try? modelContext.save(); Haptics.success() } label: { Label("Delete", systemImage: "trash") }
+                    }
                 }
                 .onDelete { offsets in
                     offsets.map { playlists[$0] }.forEach(modelContext.delete)
@@ -47,7 +50,7 @@ struct PlaylistsView: View {
 
     private func create() {
         modelContext.insert(MediaPlaylist(name: name.trimmingCharacters(in: .whitespacesAndNewlines)))
-        try? modelContext.save(); name = ""
+        try? modelContext.save(); name = ""; Haptics.success()
     }
 }
 
@@ -108,6 +111,10 @@ private struct PlaylistDetailView: View {
                 Button { player.play(item, queue: items) } label: {
                     HStack { ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 60, height: 44); VStack(alignment: .leading) { Text(item.title).lineLimit(1); Text(item.channel).font(.caption).foregroundStyle(.secondary) } }
                 }.buttonStyle(.plain)
+                    .contextMenu {
+                        Button { player.play(item, queue: items) } label: { Label("Play", systemImage: "play.fill") }
+                        ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
+                    }
             }
             .onDelete { offsets in playlist.itemIDs.remove(atOffsets: offsets); save() }
             .onMove { source, destination in playlist.itemIDs.move(fromOffsets: source, toOffset: destination); save() }
