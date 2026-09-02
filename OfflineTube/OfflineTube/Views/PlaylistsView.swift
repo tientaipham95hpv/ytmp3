@@ -62,7 +62,7 @@ private struct SmartPlaylistDetail: View {
     }
     private var items: [MediaItem] {
         let availableItems = allItems.filter(\.isAvailableOffline)
-        switch kind {
+        return switch kind {
         case .recent: Array(availableItems.sorted { $0.createdAt > $1.createdAt }.prefix(50))
         case .mostPlayed: availableItems.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }
         case .unfinished: availableItems.filter { $0.playbackPosition > 10 && $0.playbackPosition < max(0, $0.duration - 10) }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
