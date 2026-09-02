@@ -73,6 +73,21 @@ def test_missing_cookie_file_is_optional(tmp_path: Path, monkeypatch):
     assert "--cookies" not in main.yt_dlp_common_args()
 
 
+def test_progress_metrics_parses_realtime_values():
+    metrics = main.progress_metrics("download: 42.5%|1048576|2097152|NA|524288")
+    assert metrics == {
+        "progress": 42.5,
+        "downloaded_bytes": 1048576,
+        "total_bytes": 2097152,
+        "speed_bytes_per_second": 524288.0,
+    }
+
+
+def test_progress_metrics_uses_estimated_total():
+    metrics = main.progress_metrics(" 5.0%|100|NA|2000|NA")
+    assert metrics["total_bytes"] == 2000
+
+
 def test_file_endpoint_is_not_guessable(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(main, "DOWNLOAD_DIR", tmp_path)
     assert client.get("/api/files/missing").status_code == 404

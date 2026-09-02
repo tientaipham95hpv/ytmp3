@@ -26,10 +26,16 @@ struct DownloadJob: Codable, Sendable {
     let fileID: String?
     let filename: String?
     let error: String?
+    let downloadedBytes: Int64?
+    let totalBytes: Int64?
+    let speedBytesPerSecond: Double?
 
     enum CodingKeys: String, CodingKey {
         case id, status, progress, filename, error
         case fileID = "file_id"
+        case downloadedBytes = "downloaded_bytes"
+        case totalBytes = "total_bytes"
+        case speedBytesPerSecond = "speed_bytes_per_second"
     }
 }
 
@@ -88,6 +94,16 @@ actor APIClient {
         catch { throw APIError.invalidResponse }
     }
 
+    private func post<T: Decodable>(_ path: String) async throws -> T {
+        var request = URLRequest(url: try endpoint(path))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 30
+        let (data, response) = try await session.data(for: request)
+        try validate(response: response, data: data)
+        do { return try decoder.decode(T.self, from: data) }
+        catch { throw APIError.invalidResponse }
+    }
+
     private func validate(response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
@@ -110,6 +126,10 @@ actor APIClient {
 
     func job(id: String) async throws -> DownloadJob {
         try await get("api/jobs/\(id)")
+    }
+
+    func cancelJob(id: String) async throws -> JobCreated {
+        try await post("api/jobs/\(id)/cancel")
     }
 
     func download(fileID: String, filename: String) async throws -> URL {

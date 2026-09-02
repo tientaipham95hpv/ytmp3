@@ -2,6 +2,35 @@ import Combine
 import Foundation
 import SwiftData
 
+struct DownloadQueueItem: Identifiable {
+    enum State: String {
+        case queued, downloading, saving, completed, failed, cancelled
+        var title: String {
+            switch self {
+            case .queued: "Queued"
+            case .downloading: "Downloading"
+            case .saving: "Saving"
+            case .completed: "Completed"
+            case .failed: "Failed"
+            case .cancelled: "Cancelled"
+            }
+        }
+    }
+
+    let id: UUID
+    let url: String
+    let info: MediaInfo
+    let mediaType: String
+    let quality: String
+    var state: State = .queued
+    var progress = 0.0
+    var downloadedBytes: Int64 = 0
+    var totalBytes: Int64?
+    var speedBytesPerSecond: Double?
+    var backendJobID: String?
+    var error: String?
+}
+
 @MainActor
 final class DownloadViewModel: ObservableObject {
     enum MediaKind: String, CaseIterable, Identifiable {
@@ -26,105 +55,124 @@ final class DownloadViewModel: ObservableObject {
     @Published var statusText = ""
     @Published var errorMessage: String?
     @Published var completedMessage: String?
-    @Published var currentJobID: String?
-    @Published var lastDownloadedItemID: UUID?
-
-    private var downloadTask: Task<Void, Never>?
+    @Published private(set) var queueItems: [DownloadQueueItem] = []
 
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
+    private var workerTask: Task<Void, Never>?
+    private var modelContext: ModelContext?
 
-    init() {
-        quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
-    }
+    init() { quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original" }
 
     func fetchInfo() async {
         let value = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else {
-            errorMessage = "Hãy dán link YouTube."
-            return
-        }
-        isLoadingInfo = true
-        errorMessage = nil
-        completedMessage = nil
+        guard !value.isEmpty else { errorMessage = "Hãy dán link YouTube."; return }
+        isLoadingInfo = true; errorMessage = nil; completedMessage = nil
         defer { isLoadingInfo = false }
-        do {
-            mediaInfo = try await APIClient.shared.mediaInfo(url: value)
-        } catch {
-            mediaInfo = nil
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    func download(modelContext: ModelContext) async {
-        guard let info = mediaInfo else { return }
-        isDownloading = true
-        progress = 0
-        errorMessage = nil
-        completedMessage = nil
-        statusText = "Đang tạo job…"
-        defer {
-            isDownloading = false
-            currentJobID = nil
-        }
-
-        do {
-            let created = try await APIClient.shared.createDownload(url: urlText, mediaType: mediaKind.rawValue, quality: quality)
-            currentJobID = created.id
-            while true {
-                try Task.checkCancellation()
-                let job = try await APIClient.shared.job(id: created.id)
-                progress = min(1, max(0, job.progress / 100))
-                statusText = job.status == "queued" ? "Đang chờ…" : "Đang xử lý \(Int(job.progress))%"
-                if job.status == "failed" {
-                    throw APIError.server(job.error ?? "Tải media thất bại.")
-                }
-                if job.status == "completed" {
-                    guard let fileID = job.fileID, let filename = job.filename else { throw APIError.missingResult }
-                    statusText = "Đang lưu vào thiết bị…"
-                    let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
-                    let item = MediaItem(
-                        sourceID: info.id,
-                        sourceURL: info.webpageURL,
-                        title: info.title,
-                        channel: info.channel,
-                        thumbnailURL: info.thumbnail,
-                        duration: info.duration,
-                        localFilename: localURL.lastPathComponent,
-                        mediaType: mediaKind.rawValue,
-                        quality: quality
-                    )
-                    modelContext.insert(item)
-                    try modelContext.save()
-                    lastDownloadedItemID = item.id
-                    progress = 1
-                    statusText = "Hoàn tất"
-                    completedMessage = "Đã lưu “\(info.title)” vào Library."
-                    Haptics.success()
-                    return
-                }
-                try await Task.sleep(nanoseconds: 1_000_000_000)
-            }
-        } catch is CancellationError {
-            statusText = "Đã hủy"
-        } catch {
-            errorMessage = error.localizedDescription
-            statusText = ""
-        }
+        do { mediaInfo = try await APIClient.shared.mediaInfo(url: value) }
+        catch { mediaInfo = nil; errorMessage = error.localizedDescription }
     }
 
     func startDownload(modelContext: ModelContext) {
-        guard !isDownloading else { return }
-        downloadTask = Task { await download(modelContext: modelContext) }
+        guard let info = mediaInfo else { return }
+        self.modelContext = modelContext
+        queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality))
+        completedMessage = "Added “\(info.title)” to the queue."
+        errorMessage = nil
+        startWorkerIfNeeded()
+    }
+
+    func download(modelContext: ModelContext) async { startDownload(modelContext: modelContext) }
+
+    func cancel(_ id: UUID) {
+        guard let index = queueItems.firstIndex(where: { $0.id == id }) else { return }
+        let backendID = queueItems[index].backendJobID
+        queueItems[index].state = .cancelled
+        queueItems[index].speedBytesPerSecond = nil
+        if let backendID { Task { _ = try? await APIClient.shared.cancelJob(id: backendID) } }
     }
 
     func cancelDownload() {
-        downloadTask?.cancel()
-        downloadTask = nil
+        if let active = queueItems.first(where: { $0.state == .downloading || $0.state == .queued }) { cancel(active.id) }
+    }
+
+    func retry(_ id: UUID) {
+        guard let item = queueItems.first(where: { $0.id == id }) else { return }
+        var retry = DownloadQueueItem(id: UUID(), url: item.url, info: item.info, mediaType: item.mediaType, quality: item.quality)
+        retry.state = .queued
+        queueItems.append(retry)
+        startWorkerIfNeeded()
     }
 
     func retry(modelContext: ModelContext) {
-        errorMessage = nil
-        startDownload(modelContext: modelContext)
+        self.modelContext = modelContext
+        if let failed = queueItems.last(where: { $0.state == .failed || $0.state == .cancelled }) { retry(failed.id) }
+        else { startDownload(modelContext: modelContext) }
+    }
+
+    func removeFinished(at offsets: IndexSet) {
+        let removable = queueItems.indices.filter { queueItems[$0].state != .downloading && queueItems[$0].state != .saving }
+        for offset in offsets.sorted(by: >) where offset < removable.count { queueItems.remove(at: removable[offset]) }
+    }
+
+    private func startWorkerIfNeeded() {
+        guard workerTask == nil else { return }
+        workerTask = Task { [weak self] in
+            await self?.processQueue()
+            self?.workerTask = nil
+            if self?.queueItems.contains(where: { $0.state == .queued }) == true { self?.startWorkerIfNeeded() }
+        }
+    }
+
+    private func processQueue() async {
+        while let id = queueItems.first(where: { $0.state == .queued })?.id {
+            await processItem(id: id)
+        }
+        isDownloading = false; progress = 0; statusText = ""
+    }
+
+    private func processItem(id: UUID) async {
+        guard let index = queueItems.firstIndex(where: { $0.id == id }), let modelContext else { return }
+        queueItems[index].state = .downloading
+        isDownloading = true; errorMessage = nil; completedMessage = nil; progress = 0; statusText = "Creating job…"
+        do {
+            let snapshot = queueItems[index]
+            let created = try await APIClient.shared.createDownload(url: snapshot.url, mediaType: snapshot.mediaType, quality: snapshot.quality)
+            guard let createdIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[createdIndex].state != .cancelled else {
+                _ = try? await APIClient.shared.cancelJob(id: created.id); return
+            }
+            queueItems[createdIndex].backendJobID = created.id
+            while let currentIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[currentIndex].state != .cancelled {
+                let job = try await APIClient.shared.job(id: created.id)
+                guard let updateIndex = queueItems.firstIndex(where: { $0.id == id }) else { return }
+                queueItems[updateIndex].progress = min(1, max(0, job.progress / 100))
+                queueItems[updateIndex].downloadedBytes = job.downloadedBytes ?? 0
+                queueItems[updateIndex].totalBytes = job.totalBytes
+                queueItems[updateIndex].speedBytesPerSecond = job.speedBytesPerSecond
+                progress = queueItems[updateIndex].progress
+                statusText = job.status == "queued" ? "Queued…" : "Downloading \(Int(job.progress))%"
+                if job.status == "cancelled" { queueItems[updateIndex].state = .cancelled; return }
+                if job.status == "failed" { throw APIError.server(job.error ?? "Tải media thất bại.") }
+                if job.status == "completed" {
+                    guard let fileID = job.fileID, let filename = job.filename else { throw APIError.missingResult }
+                    queueItems[updateIndex].state = .saving; statusText = "Saving to device…"
+                    let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
+                    let item = MediaItem(sourceID: snapshot.info.id, sourceURL: snapshot.info.webpageURL, title: snapshot.info.title, channel: snapshot.info.channel, thumbnailURL: snapshot.info.thumbnail, duration: snapshot.info.duration, localFilename: localURL.lastPathComponent, mediaType: snapshot.mediaType, quality: snapshot.quality)
+                    modelContext.insert(item); try modelContext.save()
+                    guard let finishedIndex = queueItems.firstIndex(where: { $0.id == id }) else { return }
+                    queueItems[finishedIndex].state = .completed; queueItems[finishedIndex].progress = 1
+                    queueItems[finishedIndex].downloadedBytes = FileStore.fileSize(for: item)
+                    queueItems[finishedIndex].totalBytes = queueItems[finishedIndex].downloadedBytes
+                    queueItems[finishedIndex].speedBytesPerSecond = nil
+                    completedMessage = "Downloaded “\(snapshot.info.title)”."; Haptics.success()
+                    break
+                }
+                try await Task.sleep(for: .seconds(1))
+            }
+        } catch {
+            guard let failedIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[failedIndex].state != .cancelled else { return }
+            queueItems[failedIndex].state = .failed; queueItems[failedIndex].error = error.localizedDescription
+            queueItems[failedIndex].speedBytesPerSecond = nil; errorMessage = error.localizedDescription
+        }
     }
 }

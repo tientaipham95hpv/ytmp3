@@ -25,6 +25,8 @@ YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", 
 jobs: dict[str, dict] = {}
 files: dict[str, Path] = {}
 active_tasks: set[asyncio.Task] = set()
+active_processes: dict[str, subprocess.Popen[str]] = {}
+cancelled_jobs: set[str] = set()
 state_lock = Lock()
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 YOUTUBE_COOKIES_FILE = Path(os.getenv("YOUTUBE_COOKIES_FILE", "/run/secrets/youtube-cookies.txt"))
@@ -154,12 +156,48 @@ def progress_from_line(line: str) -> float | None:
     return min(100.0, max(0.0, float(match.group(1)))) if match else None
 
 
+def number_from_progress(value: str) -> float | None:
+    value = value.strip()
+    if not value or value.upper() in {"NA", "N/A", "NONE"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def progress_metrics(line: str) -> dict[str, float | int]:
+    value = line.strip()
+    if value.startswith("download:"):
+        value = value.removeprefix("download:")
+    if "|" not in value:
+        return {}
+    parts = value.split("|")
+    if len(parts) < 5:
+        progress = progress_from_line(line)
+        return {"progress": progress} if progress is not None else {}
+    progress = progress_from_line(parts[0])
+    downloaded = number_from_progress(parts[1])
+    total = number_from_progress(parts[2]) or number_from_progress(parts[3])
+    speed = number_from_progress(parts[4])
+    metrics: dict[str, float | int] = {}
+    if progress is not None:
+        metrics["progress"] = progress
+    if downloaded is not None:
+        metrics["downloaded_bytes"] = int(downloaded)
+    if total is not None:
+        metrics["total_bytes"] = int(total)
+    if speed is not None:
+        metrics["speed_bytes_per_second"] = speed
+    return metrics
+
+
 def build_download_command(request: DownloadRequest, output_template: str) -> list[str]:
     base = [
         "yt-dlp", *yt_dlp_common_args(),
         "--sleep-interval", "5", "--max-sleep-interval", "10",
         "--no-playlist", "--newline", "--no-part", "--restrict-filenames",
-        "--progress-template", "download:%(progress._percent_str)s", "-o", output_template,
+        "--progress-template", "download:%(progress._percent_str)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s|%(progress.speed)s", "-o", output_template,
     ]
     if request.media_type == "audio":
         base += ["-f", "bestaudio/best"]
@@ -189,16 +227,23 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
         command = build_download_command(request, output_template)
         update_job(job_id, status="downloading", progress=0.0)
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        with state_lock:
+            active_processes[job_id] = process
         if process.stdout is None:
             raise RuntimeError("Unable to monitor downloader output")
         tail: list[str] = []
         for line in process.stdout:
             tail.append(line.strip())
             tail = tail[-20:]
-            progress = progress_from_line(line)
-            if progress is not None:
-                update_job(job_id, progress=progress)
+            metrics = progress_metrics(line)
+            if metrics:
+                update_job(job_id, **metrics)
         code = process.wait()
+        with state_lock:
+            was_cancelled = job_id in cancelled_jobs
+        if was_cancelled:
+            update_job(job_id, status="cancelled", error=None, speed_bytes_per_second=0.0)
+            return
         if code != 0:
             raise RuntimeError("\n".join(tail)[-1500:] or "yt-dlp download failed")
         candidates = [p for p in DOWNLOAD_DIR.glob(f"{job_id}.*") if p.is_file() and p.suffix not in {".part", ".ytdl"}]
@@ -212,6 +257,10 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
     except Exception as exc:
         _, detail = _friendly_error(str(exc))
         update_job(job_id, status="failed", error=detail, progress=0.0)
+    finally:
+        with state_lock:
+            active_processes.pop(job_id, None)
+            cancelled_jobs.discard(job_id)
 
 
 @app.post("/api/media/download", status_code=202)
@@ -223,12 +272,36 @@ async def media_download(request: DownloadRequest) -> dict[str, str]:
             "id": job_id, "status": "queued", "progress": 0.0,
             "media_type": request.media_type, "quality": request.quality,
             "file_id": None, "filename": None, "error": None,
+            "downloaded_bytes": 0, "total_bytes": None, "speed_bytes_per_second": None,
             "created_at": now, "updated_at": now,
         }
     task = asyncio.create_task(asyncio.to_thread(execute_download, job_id, request))
     active_tasks.add(task)
     task.add_done_callback(active_tasks.discard)
     return {"id": job_id, "status": "queued"}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str) -> dict[str, str]:
+    with state_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job["status"] in {"completed", "failed", "cancelled"}:
+            return {"id": job_id, "status": str(job["status"])}
+        cancelled_jobs.add(job_id)
+        process = active_processes.get(job_id)
+        job.update(status="cancelled", error=None, speed_bytes_per_second=0.0, updated_at=utc_now())
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            await asyncio.to_thread(process.wait, 5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    for partial in DOWNLOAD_DIR.glob(f"{job_id}.*"):
+        if partial.is_file():
+            partial.unlink(missing_ok=True)
+    return {"id": job_id, "status": "cancelled"}
 
 
 @app.get("/api/jobs/{job_id}")
