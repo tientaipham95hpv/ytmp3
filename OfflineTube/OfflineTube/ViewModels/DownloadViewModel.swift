@@ -256,6 +256,7 @@ final class DownloadViewModel: ObservableObject {
                     try FileStore.ensureCapacity(requiredBytes: job.totalBytes)
                     let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
                     let item = MediaItem(sourceID: snapshot.info.id, sourceURL: snapshot.info.webpageURL, title: snapshot.info.title, channel: snapshot.info.channel, thumbnailURL: snapshot.info.thumbnail, duration: snapshot.info.duration, localFilename: localURL.lastPathComponent, mediaType: snapshot.mediaType, quality: snapshot.quality)
+                    item.artworkFilename = await FileStore.saveArtwork(from: snapshot.info.thumbnail, sourceID: snapshot.info.id)
                     modelContext.insert(item); try modelContext.save()
                     guard let finishedIndex = queueItems.firstIndex(where: { $0.id == id }) else { return }
                     queueItems[finishedIndex].state = .completed; queueItems[finishedIndex].progress = 1

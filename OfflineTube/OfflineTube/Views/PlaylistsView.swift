@@ -61,11 +61,12 @@ private struct SmartPlaylistDetail: View {
         switch kind { case .recent: "Recently Added"; case .mostPlayed: "Most Played"; case .unfinished: "Unfinished"; case .favorites: "Favorites" }
     }
     private var items: [MediaItem] {
+        let availableItems = allItems.filter(\.isAvailableOffline)
         switch kind {
-        case .recent: Array(allItems.sorted { $0.createdAt > $1.createdAt }.prefix(50))
-        case .mostPlayed: allItems.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }
-        case .unfinished: allItems.filter { $0.playbackPosition > 10 && $0.playbackPosition < max(0, $0.duration - 10) }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
-        case .favorites: allItems.filter(\.isFavorite).sorted { $0.createdAt > $1.createdAt }
+        case .recent: Array(availableItems.sorted { $0.createdAt > $1.createdAt }.prefix(50))
+        case .mostPlayed: availableItems.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }
+        case .unfinished: availableItems.filter { $0.playbackPosition > 10 && $0.playbackPosition < max(0, $0.duration - 10) }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
+        case .favorites: availableItems.filter(\.isFavorite).sorted { $0.createdAt > $1.createdAt }
         }
     }
 
@@ -77,7 +78,7 @@ private struct SmartPlaylistDetail: View {
                 Section { Button { player.playAll(items) } label: { Label("Play All", systemImage: "play.fill").frame(maxWidth: .infinity) }.buttonStyle(.borderedProminent) }
                 ForEach(items) { item in
                     Button { player.play(item, queue: items) } label: {
-                        HStack { ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).frame(width: 64, height: 46); VStack(alignment: .leading) { Text(item.title).lineLimit(1); Text(item.channel).font(.caption).foregroundStyle(.secondary) }; Spacer(); ShareLink(item: item.localURL) { Image(systemName: "square.and.arrow.up") } }
+                        HStack { ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 64, height: 46); VStack(alignment: .leading) { Text(item.title).lineLimit(1); Text(item.channel).font(.caption).foregroundStyle(.secondary) }; Spacer(); ShareLink(item: item.localURL) { Image(systemName: "square.and.arrow.up") } }
                     }.buttonStyle(.plain)
                 }
             }
@@ -93,7 +94,7 @@ private struct PlaylistDetailView: View {
     @State private var editingName = false
     @State private var newName = ""
 
-    private var items: [MediaItem] { playlist.itemIDs.compactMap { id in allItems.first { $0.id == id } } }
+    private var items: [MediaItem] { playlist.itemIDs.compactMap { id in allItems.first { $0.id == id && $0.isAvailableOffline } } }
 
     var body: some View {
         List {
@@ -105,7 +106,7 @@ private struct PlaylistDetailView: View {
             }
             ForEach(items) { item in
                 Button { player.play(item, queue: items) } label: {
-                    HStack { ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).frame(width: 60, height: 44); VStack(alignment: .leading) { Text(item.title).lineLimit(1); Text(item.channel).font(.caption).foregroundStyle(.secondary) } }
+                    HStack { ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 60, height: 44); VStack(alignment: .leading) { Text(item.title).lineLimit(1); Text(item.channel).font(.caption).foregroundStyle(.secondary) } }
                 }.buttonStyle(.plain)
             }
             .onDelete { offsets in playlist.itemIDs.remove(atOffsets: offsets); save() }

@@ -103,7 +103,7 @@ struct LibraryView: View {
             ForEach(filteredItems) { item in
                 Button { player.play(item, queue: filteredItems) } label: {
                     VStack(alignment: .leading, spacing: 8) {
-                        ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).aspectRatio(1.35, contentMode: .fit)
+                        ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).aspectRatio(1.35, contentMode: .fit)
                         Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
                         Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
@@ -114,7 +114,7 @@ struct LibraryView: View {
 
     private func row(_ item: MediaItem) -> some View {
         HStack(spacing: 12) {
-            ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo, cornerRadius: 10).frame(width: 82, height: 58)
+            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo, cornerRadius: 10).frame(width: 82, height: 58)
             VStack(alignment: .leading, spacing: 5) {
                 Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
                 Text("\(item.channel) • \(size(item).formattedBytes)").font(.caption).foregroundStyle(.secondary).lineLimit(1)

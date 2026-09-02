@@ -9,6 +9,7 @@ final class MediaItem {
     var title: String
     var channel: String
     var thumbnailURL: String?
+    var artworkFilename: String? = nil
     var duration: Double
     var localFilename: String
     var mediaType: String
@@ -27,6 +28,7 @@ final class MediaItem {
         self.title = title
         self.channel = channel
         self.thumbnailURL = thumbnailURL
+        self.artworkFilename = nil
         self.duration = duration
         self.localFilename = localFilename
         self.mediaType = mediaType
@@ -43,6 +45,13 @@ final class MediaItem {
     var localURL: URL {
         FileStore.downloadsDirectory.appendingPathComponent(localFilename)
     }
+
+    var artworkURL: URL? {
+        guard let artworkFilename else { return nil }
+        return FileStore.artworkDirectory.appendingPathComponent(artworkFilename)
+    }
+
+    var isAvailableOffline: Bool { FileManager.default.fileExists(atPath: localURL.path) }
 
     var isVideo: Bool { mediaType == "video" }
 }

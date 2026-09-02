@@ -23,7 +23,7 @@ struct DownloadsView: View {
                 } else {
                     ForEach(items) { item in
                         HStack(spacing: 12) {
-                            ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).frame(width: 72, height: 50)
+                            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 72, height: 50)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 Text("\(item.mediaType.capitalized) • \(item.quality) • \(size(item).formattedBytes)").font(.caption).foregroundStyle(.secondary)

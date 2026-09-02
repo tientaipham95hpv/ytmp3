@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import MediaPlayer
 import UIKit
+import SwiftData
 
 @MainActor
 final class PlayerManager: ObservableObject {
@@ -27,6 +28,8 @@ final class PlayerManager: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var sleepTask: Task<Void, Never>?
+    private var modelContext: ModelContext?
+    private var lastSavedSecond = -1
 
     private init() {
         configureAudioSession()
@@ -48,6 +51,7 @@ final class PlayerManager: ObservableObject {
             currentItem = item
             item.lastPlayedAt = Date()
             item.playCount += 1
+            saveContext()
             let playerItem = AVPlayerItem(url: item.localURL)
             player.replaceCurrentItem(with: playerItem)
             duration = item.duration
@@ -72,6 +76,7 @@ final class PlayerManager: ObservableObject {
         player.pause()
         isPlaying = false
         persistPosition()
+        saveContext()
         updateNowPlaying()
     }
 
@@ -87,6 +92,7 @@ final class PlayerManager: ObservableObject {
         player.seek(to: CMTime(seconds: safeValue, preferredTimescale: 600))
         currentTime = safeValue
         persistPosition()
+        saveContext()
         updateNowPlaying()
     }
 
@@ -158,6 +164,13 @@ final class PlayerManager: ObservableObject {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
+    func attach(modelContext: ModelContext) { self.modelContext = modelContext }
+
+    func savePlaybackState() {
+        persistPosition()
+        saveContext()
+    }
+
     private func configureAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
@@ -196,7 +209,16 @@ final class PlayerManager: ObservableObject {
         }
     }
 
-    private func persistPosition() { currentItem?.playbackPosition = currentTime }
+    private func persistPosition() {
+        currentItem?.playbackPosition = currentTime
+        let second = Int(currentTime)
+        if second / 5 != lastSavedSecond / 5 {
+            lastSavedSecond = second
+            saveContext()
+        }
+    }
+
+    private func saveContext() { try? modelContext?.save() }
 
     private func updateNowPlaying() {
         guard let item = currentItem else { return }
@@ -216,8 +238,15 @@ final class PlayerManager: ObservableObject {
     }
 
     private func loadArtwork(for item: MediaItem) {
-        guard MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil,
-              let value = item.thumbnailURL, let url = URL(string: value) else { return }
+        guard MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] == nil else { return }
+        if let localURL = item.artworkURL, let image = UIImage(contentsOfFile: localURL.path) {
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+            info[MPMediaItemPropertyArtwork] = artwork
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            return
+        }
+        guard let value = item.thumbnailURL, let url = URL(string: value) else { return }
         Task.detached {
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = UIImage(data: data) else { return }

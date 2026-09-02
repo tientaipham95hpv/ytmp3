@@ -6,6 +6,7 @@ struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
     @EnvironmentObject private var downloads: DownloadViewModel
+    @EnvironmentObject private var network: NetworkMonitor
     @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
     @FocusState private var isURLFocused: Bool
 
@@ -17,6 +18,12 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
                 greeting
+                if !network.isConnected {
+                    Label("You’re offline. Downloads will resume when the network returns.", systemImage: "wifi.slash")
+                        .font(.subheadline).foregroundStyle(.secondary).padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+                }
                 pasteCard
                 if downloads.isLoadingInfo { metadataSkeleton }
                 if let info = downloads.mediaInfo { mediaCard(info) }
@@ -72,7 +79,7 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
-            .disabled(downloads.isLoadingInfo || downloads.urlText.trimmingCharacters(in: .whitespaces).isEmpty)
+            .disabled(!network.isConnected || downloads.isLoadingInfo || downloads.urlText.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(18)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -128,7 +135,7 @@ struct HomeView: View {
                         ForEach(items) { item in
                             Button { player.play(item, queue: items) } label: {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).frame(width: 190, height: 110)
+                                    ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo).frame(width: 190, height: 110)
                                     Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                     Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                 }.frame(width: 190, alignment: .leading)

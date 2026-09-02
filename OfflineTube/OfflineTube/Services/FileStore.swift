@@ -9,6 +9,12 @@ enum FileStore {
         return directory
     }
 
+    static var artworkDirectory: URL {
+        let directory = downloadsDirectory.deletingLastPathComponent().appendingPathComponent("Artwork", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
     static func destination(filename: String) -> URL {
         let safeExtension = URL(fileURLWithPath: filename).pathExtension
         let name = UUID().uuidString + (safeExtension.isEmpty ? "" : ".\(safeExtension)")
@@ -30,6 +36,24 @@ enum FileStore {
         if FileManager.default.fileExists(atPath: item.localURL.path) {
             try FileManager.default.removeItem(at: item.localURL)
         }
+        if let artworkURL = item.artworkURL, FileManager.default.fileExists(atPath: artworkURL.path) {
+            try FileManager.default.removeItem(at: artworkURL)
+        }
+    }
+
+    static func saveArtwork(from remoteValue: String?, sourceID: String) async -> String? {
+        guard let remoteValue, let remoteURL = URL(string: remoteValue),
+              let (data, response) = try? await URLSession.shared.data(from: remoteURL),
+              data.count <= 15 * 1024 * 1024,
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let ext = response.mimeType == "image/png" ? "png" : "jpg"
+        let safeID = sourceID.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
+        let filename = "\(safeID)-\(UUID().uuidString).\(ext)"
+        let destination = artworkDirectory.appendingPathComponent(filename)
+        do {
+            try data.write(to: destination, options: [.atomic, .completeFileProtectionUnlessOpen])
+            return filename
+        } catch { return nil }
     }
 
     static func fileSize(for item: MediaItem) -> Int64 {

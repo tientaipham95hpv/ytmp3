@@ -37,26 +37,37 @@ enum AccentChoice: String, CaseIterable, Identifiable {
 
 struct ArtworkView: View {
     let url: String?
+    var localURL: URL? = nil
     var isVideo = false
     var cornerRadius: CGFloat = 12
 
     var body: some View {
-        AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
+        Group {
+            if let localURL, let image = UIImage(contentsOfFile: localURL.path) {
+                artwork(Image(uiImage: image))
+            } else {
+                AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
             switch phase {
             case .success(let image):
-                ZStack {
-                    image.resizable().scaledToFill().blur(radius: 20).opacity(0.38)
-                    Rectangle().fill(.black.opacity(0.08))
-                    image.resizable().scaledToFit().padding(2)
-                }
+                artwork(image)
             case .failure: placeholder
             case .empty: placeholder.overlay { ProgressView().controlSize(.small) }
             @unknown default: placeholder
+            }
+                }
             }
         }
         .background(Color.secondary.opacity(0.08))
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+    }
+
+    private func artwork(_ image: Image) -> some View {
+        ZStack {
+            image.resizable().scaledToFill().blur(radius: 20).opacity(0.38)
+            Rectangle().fill(.black.opacity(0.08))
+            image.resizable().scaledToFit().padding(2)
+        }
     }
 
     private var placeholder: some View {

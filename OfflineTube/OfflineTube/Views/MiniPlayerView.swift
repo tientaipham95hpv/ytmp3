@@ -11,7 +11,7 @@ struct MiniPlayerView: View {
                 HStack(spacing: 12) {
                     Button(action: openPlayer) {
                         HStack(spacing: 11) {
-                            ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo, cornerRadius: 7).frame(width: 46, height: 46)
+                            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo, cornerRadius: 7).frame(width: 46, height: 46)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)

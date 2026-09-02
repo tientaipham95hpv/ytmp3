@@ -50,6 +50,8 @@
     "Nothing Playing" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa phát nội dung" } } } },
     "Now Playing" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đang phát" } } } },
     "Off" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Tắt" } } } },
+    "Offline — local Library and playback are available" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đang ngoại tuyến — Thư viện và phát nội dung trên máy vẫn khả dụng" } } } },
+    "You’re offline. Downloads will resume when the network returns." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bạn đang ngoại tuyến. Tải xuống sẽ tiếp tục khi có mạng." } } } },
     "On This iPhone" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Trên iPhone này" } } } },
     "Orange" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Cam" } } } },
     "Paste URL" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Dán liên kết" } } } },

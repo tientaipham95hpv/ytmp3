@@ -52,7 +52,7 @@ struct PlayerView: View {
                 Button { showVideoFullscreen = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").padding(10).background(.ultraThinMaterial, in: Circle()) }.padding(10)
             }
         } else {
-            ArtworkView(url: item.thumbnailURL, cornerRadius: 24)
+            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, cornerRadius: 24)
                 .frame(width: min(width - 48, 390), height: min(width - 48, 390))
                 .shadow(color: .black.opacity(0.28), radius: 24, y: 14)
         }
