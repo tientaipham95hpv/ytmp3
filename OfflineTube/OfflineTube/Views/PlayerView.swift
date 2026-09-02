@@ -201,18 +201,18 @@ private struct AudioControlsView: View {
     }
 
     private var customEQSection: some View {
-        Section("Custom EQ") {
+        Section {
             ForEach(["60", "250", "1K", "4K", "12K"], id: \.self) { frequency in
                 LabeledContent(frequency) { Slider(value: .constant(0.0), in: -12.0...12.0).disabled(true).frame(maxWidth: 210) }
             }
-        } footer: { Text("Disabled to avoid introducing a second audio pipeline that could desynchronize playback and remote controls.") }
+        } header: { Text("Custom EQ") } footer: { Text("Disabled to avoid introducing a second audio pipeline that could desynchronize playback and remote controls.") }
     }
 
     private var balanceSection: some View {
-        Section("Balance & Normalization") {
+        Section {
             LabeledContent("Balance") { Slider(value: .constant(0.0), in: -1.0...1.0).disabled(true).frame(maxWidth: 180) }
             Toggle("Volume Normalization", isOn: .constant(false)).disabled(true)
-        } footer: { Text("AVPlayer does not expose realtime pan, multiband EQ, or loudness normalization. These controls require an AVAudioEngine migration.") }
+        } header: { Text("Balance & Normalization") } footer: { Text("AVPlayer does not expose realtime pan, multiband EQ, or loudness normalization. These controls require an AVAudioEngine migration.") }
     }
 
     private var equalizerPreview: some View {
