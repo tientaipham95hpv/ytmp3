@@ -3,8 +3,6 @@ name: Build unsigned iOS IPA
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
     tags:
       - "v*"
 
@@ -20,6 +18,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve package version
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${GITHUB_SHA::7}"
+          fi
+          IPA_NAME="OfflineTube-${VERSION}-unsigned.ipa"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Build Release for iphoneos
         run: |
@@ -46,6 +58,8 @@ jobs:
           fi
 
       - name: Package unsigned IPA
+        env:
+          IPA_NAME: ${{ steps.package.outputs.ipa_name }}
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/OfflineTube.app"
@@ -53,13 +67,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/package/Payload"
           ditto "$APP" "$RUNNER_TEMP/package/Payload/OfflineTube.app"
           cd "$RUNNER_TEMP/package"
-          /usr/bin/zip -qry -y "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa" Payload
-          test -s "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa"
+          /usr/bin/zip -qry -y "$GITHUB_WORKSPACE/$IPA_NAME" Payload
+          test -s "$GITHUB_WORKSPACE/$IPA_NAME"
 
       - name: Validate IPA structure
+        env:
+          IPA_NAME: ${{ steps.package.outputs.ipa_name }}
         run: |
           set -euo pipefail
-          IPA="$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa"
+          IPA="$GITHUB_WORKSPACE/$IPA_NAME"
           VERIFY="$RUNNER_TEMP/verify-ipa"
           /usr/bin/unzip -t "$IPA"
           mkdir -p "$VERIFY"
@@ -83,8 +99,8 @@ jobs:
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: OfflineTube-unsigned-${{ github.ref_name }}
-          path: OfflineTube-unsigned.ipa
+          name: OfflineTube-${{ steps.package.outputs.version }}-unsigned-IPA
+          path: ${{ steps.package.outputs.ipa_name }}
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -93,9 +109,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
+          IPA_NAME: ${{ steps.package.outputs.ipa_name }}
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" \
-            "$GITHUB_WORKSPACE/OfflineTube-unsigned.ipa#OfflineTube-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/$IPA_NAME#$IPA_NAME" \
             --title "OfflineTube $GITHUB_REF_NAME" \
             --generate-notes
