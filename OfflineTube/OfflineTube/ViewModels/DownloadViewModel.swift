@@ -1,11 +1,12 @@
 import Combine
 import Foundation
 import SwiftData
+import SwiftUI
 
 struct DownloadQueueItem: Identifiable {
     enum State: String {
         case queued, downloading, saving, completed, failed, cancelled
-        var title: String {
+        var title: LocalizedStringKey {
             switch self {
             case .queued: "Queued"
             case .downloading: "Downloading"
@@ -36,7 +37,7 @@ final class DownloadViewModel: ObservableObject {
     enum MediaKind: String, CaseIterable, Identifiable {
         case audio, video
         var id: String { rawValue }
-        var title: String { self == .audio ? "Audio" : "Video" }
+        var title: LocalizedStringKey { self == .audio ? "Audio" : "Video" }
     }
 
     @Published var urlText = ""
@@ -78,7 +79,7 @@ final class DownloadViewModel: ObservableObject {
         guard let info = mediaInfo else { return }
         self.modelContext = modelContext
         queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality))
-        completedMessage = "Added “\(info.title)” to the queue."
+        completedMessage = localized("Added “\(info.title)” to the queue.", "Đã thêm “\(info.title)” vào hàng đợi.")
         errorMessage = nil
         startWorkersIfNeeded()
     }
@@ -140,7 +141,7 @@ final class DownloadViewModel: ObservableObject {
     private func processItem(id: UUID) async {
         guard let index = queueItems.firstIndex(where: { $0.id == id }), let modelContext else { return }
         queueItems[index].state = .downloading
-        isDownloading = true; errorMessage = nil; completedMessage = nil; progress = 0; statusText = "Creating job…"
+        isDownloading = true; errorMessage = nil; completedMessage = nil; progress = 0; statusText = localized("Creating job…", "Đang tạo tác vụ…")
         do {
             let snapshot = queueItems[index]
             let created = try await APIClient.shared.createDownload(url: snapshot.url, mediaType: snapshot.mediaType, quality: snapshot.quality)
@@ -156,12 +157,12 @@ final class DownloadViewModel: ObservableObject {
                 queueItems[updateIndex].totalBytes = job.totalBytes
                 queueItems[updateIndex].speedBytesPerSecond = job.speedBytesPerSecond
                 progress = queueItems[updateIndex].progress
-                statusText = job.status == "queued" ? "Queued…" : "Downloading \(Int(job.progress))%"
+                statusText = job.status == "queued" ? localized("Queued…", "Đang chờ…") : localized("Downloading \(Int(job.progress))%", "Đang tải \(Int(job.progress))%")
                 if job.status == "cancelled" { queueItems[updateIndex].state = .cancelled; return }
                 if job.status == "failed" { throw APIError.server(job.error ?? "Tải media thất bại.") }
                 if job.status == "completed" {
                     guard let fileID = job.fileID, let filename = job.filename else { throw APIError.missingResult }
-                    queueItems[updateIndex].state = .saving; statusText = "Saving to device…"
+                    queueItems[updateIndex].state = .saving; statusText = localized("Saving to device…", "Đang lưu vào thiết bị…")
                     let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
                     let item = MediaItem(sourceID: snapshot.info.id, sourceURL: snapshot.info.webpageURL, title: snapshot.info.title, channel: snapshot.info.channel, thumbnailURL: snapshot.info.thumbnail, duration: snapshot.info.duration, localFilename: localURL.lastPathComponent, mediaType: snapshot.mediaType, quality: snapshot.quality)
                     modelContext.insert(item); try modelContext.save()
@@ -170,7 +171,7 @@ final class DownloadViewModel: ObservableObject {
                     queueItems[finishedIndex].downloadedBytes = FileStore.fileSize(for: item)
                     queueItems[finishedIndex].totalBytes = queueItems[finishedIndex].downloadedBytes
                     queueItems[finishedIndex].speedBytesPerSecond = nil
-                    completedMessage = "Downloaded “\(snapshot.info.title)”."; Haptics.success()
+                    completedMessage = localized("Downloaded “\(snapshot.info.title)”.", "Đã tải “\(snapshot.info.title)”."); Haptics.success()
                     break
                 }
                 try await Task.sleep(for: .seconds(1))
@@ -180,5 +181,9 @@ final class DownloadViewModel: ObservableObject {
             queueItems[failedIndex].state = .failed; queueItems[failedIndex].error = error.localizedDescription
             queueItems[failedIndex].speedBytesPerSecond = nil; errorMessage = error.localizedDescription
         }
+    }
+
+    private func localized(_ english: String, _ vietnamese: String) -> String {
+        UserDefaults.standard.string(forKey: "appLanguage") == AppLanguage.vietnamese.rawValue ? vietnamese : english
     }
 }

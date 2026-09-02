@@ -5,6 +5,7 @@ struct RootView: View {
     @StateObject private var downloads = DownloadViewModel()
     @AppStorage("appTheme") private var theme = AppTheme.system.rawValue
     @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
+    @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
     @State private var selectedTab = 0
     @State private var showPlayer = false
 
@@ -28,7 +29,10 @@ struct RootView: View {
         }
         .fullScreenCover(isPresented: $showPlayer) { PlayerView() }
         .preferredColorScheme(selectedTheme.colorScheme)
+        .environment(\.locale, Locale(identifier: language))
         .tint(accentColor)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .animation(.snappy, value: player.currentItem?.id)
     }
 }

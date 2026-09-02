@@ -57,7 +57,7 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
-                    Picker("Sort", selection: $sort) { ForEach(Sort.allCases) { Text($0.rawValue).tag($0) } }
+                    Picker("Sort", selection: $sort) { ForEach(Sort.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 Button { withAnimation(.snappy) { gridMode.toggle() } } label: { Image(systemName: gridMode ? "list.bullet" : "square.grid.2x2") }
             }
@@ -80,7 +80,7 @@ struct LibraryView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(Filter.allCases) { item in
-                    Button(item.rawValue) { withAnimation(.snappy) { filter = item }; Haptics.tap() }
+                    Button { withAnimation(.snappy) { filter = item }; Haptics.tap() } label: { Text(LocalizedStringKey(item.rawValue)) }
                         .buttonStyle(.borderedProminent)
                         .tint(filter == item ? .accentColor : .secondary.opacity(0.16))
                         .foregroundStyle(filter == item ? .white : .primary)
@@ -128,7 +128,9 @@ struct LibraryView: View {
     }
 
     @ViewBuilder private func menu(_ item: MediaItem) -> some View {
-        Button { item.isFavorite.toggle(); save() } label: { Label(item.isFavorite ? "Unfavorite" : "Favorite", systemImage: item.isFavorite ? "heart.slash" : "heart") }
+        Button { item.isFavorite.toggle(); save() } label: {
+            Label { Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite")) } icon: { Image(systemName: item.isFavorite ? "heart.slash" : "heart") }
+        }
         Button { playlistTarget = item } label: { Label("Add to Playlist", systemImage: "text.badge.plus") }
         Divider()
         Button(role: .destructive) { delete(item) } label: { Label("Delete Download", systemImage: "trash") }

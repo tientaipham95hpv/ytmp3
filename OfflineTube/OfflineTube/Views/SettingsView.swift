@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage("defaultVideoQuality") private var videoQuality = "720"
     @AppStorage("appTheme") private var theme = AppTheme.system.rawValue
     @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
+    @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
     @AppStorage("backendURL") private var backendURL = "https://offlinetube.cineviet.live"
     @State private var storage: Int64 = 0
     @State private var confirmDeleteAll = false
@@ -31,6 +32,7 @@ struct SettingsView: View {
                 Button("Delete all downloads", role: .destructive) { confirmDeleteAll = true }
             }
             Section("Appearance") {
+                Picker("Language", selection: $language) { ForEach(AppLanguage.allCases) { Text($0.title).tag($0.rawValue) } }
                 Picker("Theme", selection: $theme) { ForEach(AppTheme.allCases) { Text($0.title).tag($0.rawValue) } }
                 Picker("Accent color", selection: $accent) {
                     ForEach(AccentChoice.allCases) { choice in Label(choice.title, systemImage: "circle.fill").foregroundStyle(choice.color).tag(choice.rawValue) }
@@ -53,13 +55,15 @@ struct SettingsView: View {
 
     private func refreshStorage() { storage = FileStore.storageUsage() }
     private func clearCache() {
-        do { try FileStore.clearOrphanedFiles(keeping: items); refreshStorage(); resultMessage = "Cache cleared." }
+        do { try FileStore.clearOrphanedFiles(keeping: items); refreshStorage(); resultMessage = localized("Cache cleared.", "Đã dọn bộ nhớ đệm.") }
         catch { resultMessage = error.localizedDescription }
     }
     private func deleteAll() {
         do {
             for item in items { player.stopIfPlaying(item); try FileStore.remove(item); modelContext.delete(item) }
-            try modelContext.save(); refreshStorage(); Haptics.success(); resultMessage = "All downloads were deleted."
+            try modelContext.save(); refreshStorage(); Haptics.success(); resultMessage = localized("All downloads were deleted.", "Đã xóa toàn bộ nội dung tải về.")
         } catch { resultMessage = error.localizedDescription }
     }
+
+    private func localized(_ english: String, _ vietnamese: String) -> String { language == AppLanguage.vietnamese.rawValue ? vietnamese : english }
 }

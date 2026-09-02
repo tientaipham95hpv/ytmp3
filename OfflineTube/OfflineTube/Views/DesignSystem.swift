@@ -4,14 +4,25 @@ import UIKit
 enum AppTheme: String, CaseIterable, Identifiable {
     case system, light, dark
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: LocalizedStringKey {
+        switch self { case .system: "System"; case .light: "Light"; case .dark: "Dark" }
+    }
     var colorScheme: ColorScheme? { self == .system ? nil : (self == .dark ? .dark : .light) }
+}
+
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case english = "en"
+    case vietnamese = "vi"
+    var id: String { rawValue }
+    var title: LocalizedStringKey { self == .english ? "English" : "Vietnamese" }
 }
 
 enum AccentChoice: String, CaseIterable, Identifiable {
     case pink, red, orange, blue, purple, green
     var id: String { rawValue }
-    var title: String { rawValue.capitalized }
+    var title: LocalizedStringKey {
+        switch self { case .pink: "Pink"; case .red: "Red"; case .orange: "Orange"; case .blue: "Blue"; case .purple: "Purple"; case .green: "Green" }
+    }
     var color: Color {
         switch self {
         case .pink: .pink
@@ -32,12 +43,18 @@ struct ArtworkView: View {
     var body: some View {
         AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
             switch phase {
-            case .success(let image): image.resizable().scaledToFill()
+            case .success(let image):
+                ZStack {
+                    image.resizable().scaledToFill().blur(radius: 20).opacity(0.38)
+                    Rectangle().fill(.black.opacity(0.08))
+                    image.resizable().scaledToFit().padding(2)
+                }
             case .failure: placeholder
             case .empty: placeholder.overlay { ProgressView().controlSize(.small) }
             @unknown default: placeholder
             }
         }
+        .background(Color.secondary.opacity(0.08))
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
@@ -54,7 +71,7 @@ struct SectionHeader: View {
 
     var body: some View {
         HStack {
-            Text(title).font(.title2.bold())
+            Text(LocalizedStringKey(title)).font(.title2.bold())
             Spacer()
             if let action { Button("See All", action: action).font(.subheadline.weight(.semibold)) }
         }

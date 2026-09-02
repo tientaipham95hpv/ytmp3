@@ -43,7 +43,8 @@ struct DownloadsView: View {
                 ArtworkView(url: item.info.thumbnail, isVideo: item.mediaType == "video").frame(width: 72, height: 50)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.info.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                    Label(item.state.title, systemImage: stateIcon(item.state)).font(.caption).foregroundStyle(stateColor(item.state))
+                    Label { Text(item.state.title) } icon: { Image(systemName: stateIcon(item.state)) }
+                        .font(.caption).foregroundStyle(stateColor(item.state))
                 }
                 Spacer()
                 if item.state == .queued || item.state == .downloading || item.state == .saving {

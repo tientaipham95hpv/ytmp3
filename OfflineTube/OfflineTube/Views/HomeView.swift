@@ -26,6 +26,10 @@ struct HomeView: View {
             .padding(.horizontal, 18)
             .padding(.bottom, 24)
         }
+        .background(
+            LinearGradient(colors: [Color.accentColor.opacity(0.11), Color(.systemBackground), Color(.systemBackground)], startPoint: .topLeading, endPoint: .center)
+                .ignoresSafeArea()
+        )
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Home")
         .toolbar {
