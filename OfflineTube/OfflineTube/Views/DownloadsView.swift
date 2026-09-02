@@ -4,6 +4,7 @@ import SwiftUI
 struct DownloadsView: View {
     @EnvironmentObject private var downloads: DownloadViewModel
     @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
+    @State private var pendingCancel: DownloadQueueItem?
 
     private var active: [DownloadQueueItem] { downloads.queueItems.filter { [.queued, .downloading, .saving].contains($0.state) } }
     private var history: [DownloadQueueItem] { Array(downloads.queueItems.filter { [.completed, .failed, .cancelled].contains($0.state) }.reversed()) }
@@ -35,6 +36,10 @@ struct DownloadsView: View {
             }
         }
         .navigationTitle("Downloads")
+        .confirmationDialog("Cancel this nearly completed download?", isPresented: Binding(get: { pendingCancel != nil }, set: { if !$0 { pendingCancel = nil } }), titleVisibility: .visible) {
+            Button("Cancel Download", role: .destructive) { if let item = pendingCancel { downloads.cancel(item.id) }; pendingCancel = nil }
+            Button("Keep Downloading", role: .cancel) { pendingCancel = nil }
+        } message: { Text("Most of the file has already downloaded.") }
     }
 
     private func downloadRow(_ item: DownloadQueueItem) -> some View {
@@ -48,7 +53,7 @@ struct DownloadsView: View {
                 }
                 Spacer()
                 if item.state == .queued || item.state == .downloading || item.state == .saving {
-                    Button { downloads.cancel(item.id) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).font(.title3) }.buttonStyle(.plain)
+                    Button { cancel(item) } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).font(.title3) }.buttonStyle(.plain)
                 } else if item.state == .failed || item.state == .cancelled {
                     Button { downloads.retry(item.id) } label: { Image(systemName: "arrow.clockwise.circle.fill").font(.title3) }.buttonStyle(.plain)
                 }
@@ -59,6 +64,7 @@ struct DownloadsView: View {
                     Text(byteSummary(item)).lineLimit(1)
                     Spacer()
                     if let speed = item.speedBytesPerSecond, speed > 0 { Text("\(Int64(speed).formattedBytes)/s") }
+                    if let remaining = item.remainingSeconds { Text("\(remaining.remainingTime) left") }
                     Text("\(Int(item.progress * 100))%")
                 }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
@@ -86,4 +92,8 @@ struct DownloadsView: View {
         switch state { case .completed: .green; case .failed: .red; case .cancelled: .secondary; default: .accentColor }
     }
     private func size(_ item: MediaItem) -> Int64 { item.fileSize > 0 ? item.fileSize : FileStore.fileSize(for: item) }
+    private func cancel(_ item: DownloadQueueItem) {
+        if item.progress >= 0.85 { pendingCancel = item }
+        else { downloads.cancel(item.id) }
+    }
 }

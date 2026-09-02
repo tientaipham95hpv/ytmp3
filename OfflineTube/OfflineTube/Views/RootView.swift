@@ -56,6 +56,20 @@ struct RootView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .animation(.snappy, value: player.currentItem?.id)
         .animation(.snappy, value: network.isConnected)
+        .overlay(alignment: .top) {
+            if let message = downloads.completedMessage {
+                Label(message, systemImage: "checkmark.circle.fill")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 12)
+                    .background(.green, in: Capsule()).shadow(radius: 10)
+                    .padding(.top, 8).transition(.move(edge: .top).combined(with: .opacity))
+                    .task(id: message) {
+                        try? await Task.sleep(for: .seconds(4))
+                        if downloads.completedMessage == message { downloads.completedMessage = nil }
+                    }
+            }
+        }
+        .animation(.snappy, value: downloads.completedMessage)
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { reconcileOfflineLibrary() }
             else if phase == .inactive || phase == .background { player.savePlaybackState() }

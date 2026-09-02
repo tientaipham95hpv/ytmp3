@@ -100,6 +100,14 @@ extension Double {
             ? String(format: "%d:%02d:%02d", total / 3600, total % 3600 / 60, total % 60)
             : String(format: "%d:%02d", total / 60, total % 60)
     }
+
+    var remainingTime: String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = self >= 3600 ? [.hour, .minute] : [.minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 2
+        return formatter.string(from: max(0, self)) ?? "—"
+    }
 }
 
 enum Haptics {

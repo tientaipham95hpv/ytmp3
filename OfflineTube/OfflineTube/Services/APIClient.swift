@@ -8,10 +8,12 @@ struct MediaInfo: Codable, Sendable {
     let channel: String
     let duration: Double
     let webpageURL: String
+    let estimatedSizes: [String: Int64]?
 
     enum CodingKeys: String, CodingKey {
         case id, title, thumbnail, channel, duration
         case webpageURL = "webpage_url"
+        case estimatedSizes = "estimated_sizes"
     }
 }
 

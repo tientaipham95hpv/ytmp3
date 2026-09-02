@@ -18,13 +18,22 @@ def test_rejects_non_youtube_url():
 
 
 def test_info_maps_metadata(monkeypatch):
-    payload = {"id": "abc", "title": "Song", "channel": "Artist", "duration": 61, "thumbnail": "https://img/x.jpg"}
+    payload = {
+        "id": "abc", "title": "Song", "channel": "Artist", "duration": 100,
+        "thumbnail": "https://img/x.jpg",
+        "formats": [
+            {"vcodec": "none", "acodec": "mp4a", "filesize": 1_000_000},
+            {"vcodec": "avc1", "acodec": "none", "height": 720, "filesize_approx": 5_000_000},
+        ],
+    }
     monkeypatch.setattr(main, "require_binary", lambda _: None)
     monkeypatch.setattr(main, "run_command", lambda _: type("Result", (), {"returncode": 0, "stdout": json.dumps(payload), "stderr": ""})())
     response = client.post("/api/media/info", json={"url": "https://youtu.be/abc"})
     assert response.status_code == 200
     assert response.json()["title"] == "Song"
-    assert response.json()["duration"] == 61
+    assert response.json()["duration"] == 100
+    assert response.json()["estimated_sizes"]["audio:128"] == 1_648_000
+    assert response.json()["estimated_sizes"]["video:720"] == 6_000_000
 
 
 def test_audio_quality_validation():

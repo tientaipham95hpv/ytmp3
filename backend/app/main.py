@@ -156,6 +156,37 @@ def _friendly_error(stderr: str) -> tuple[int, str]:
     return 422, stderr.strip()[-1000:] or "Unable to read media metadata"
 
 
+def estimated_sizes(data: dict) -> dict[str, int]:
+    """Return conservative byte estimates without changing download format selection."""
+    duration = float(data.get("duration") or 0)
+    formats = data.get("formats") or []
+
+    def size(item: dict) -> int:
+        return int(item.get("filesize") or item.get("filesize_approx") or 0)
+
+    estimates: dict[str, int] = {}
+    audio_formats = [item for item in formats if item.get("acodec") != "none" and item.get("vcodec") == "none"]
+    original_audio = max((size(item) for item in audio_formats), default=0)
+    if original_audio:
+        estimates["audio:original"] = original_audio
+        estimates["audio:m4a"] = original_audio
+    if duration > 0:
+        for bitrate in (128, 192, 320):
+            estimates[f"audio:{bitrate}"] = int(duration * bitrate * 1000 / 8 * 1.03)
+
+    video_formats = [item for item in formats if item.get("vcodec") != "none"]
+    for quality in (360, 480, 720, 1080):
+        candidates = [item for item in video_formats if int(item.get("height") or 0) <= quality and size(item) > 0]
+        if candidates:
+            chosen = max(candidates, key=lambda item: (int(item.get("height") or 0), size(item)))
+            estimates[f"video:{quality}"] = size(chosen) + (0 if chosen.get("acodec") != "none" else original_audio)
+    best_candidates = [item for item in video_formats if size(item) > 0]
+    if best_candidates:
+        chosen = max(best_candidates, key=lambda item: (int(item.get("height") or 0), size(item)))
+        estimates["video:best"] = size(chosen) + (0 if chosen.get("acodec") != "none" else original_audio)
+    return estimates
+
+
 @app.post("/api/media/info")
 async def media_info(request: URLRequest) -> dict:
     try:
@@ -182,6 +213,7 @@ async def media_info(request: URLRequest) -> dict:
         "channel": data.get("channel") or data.get("uploader") or "Unknown channel",
         "duration": int(data.get("duration") or 0),
         "webpage_url": data.get("webpage_url") or request.url,
+        "estimated_sizes": estimated_sizes(data),
     }
 
 

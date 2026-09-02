@@ -32,10 +32,11 @@ struct DownloadQueueItem: Identifiable, Codable {
     var backendJobID: String?
     var error: String?
     var retryCount: Int = 0
+    var remainingSeconds: Double?
 
     enum CodingKeys: String, CodingKey {
         case id, url, info, mediaType, quality, state, progress, downloadedBytes
-        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount
+        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount, remainingSeconds
     }
 
     init(
@@ -66,6 +67,7 @@ struct DownloadQueueItem: Identifiable, Codable {
         self.backendJobID = backendJobID
         self.error = error
         self.retryCount = retryCount
+        self.remainingSeconds = nil
     }
 
     init(from decoder: Decoder) throws {
@@ -83,6 +85,7 @@ struct DownloadQueueItem: Identifiable, Codable {
         backendJobID = try values.decodeIfPresent(String.self, forKey: .backendJobID)
         error = try values.decodeIfPresent(String.self, forKey: .error)
         retryCount = try values.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
+        remainingSeconds = try values.decodeIfPresent(Double.self, forKey: .remainingSeconds)
     }
 }
 
@@ -120,6 +123,7 @@ final class DownloadViewModel: ObservableObject {
     private let maximumConcurrentDownloads = 2
     private var modelContext: ModelContext?
     private let logger = Logger(subsystem: "com.personal.OfflineTube", category: "Downloads")
+    private var speedSamples: [UUID: [Double]] = [:]
 
     init() {
         quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
@@ -154,7 +158,9 @@ final class DownloadViewModel: ObservableObject {
             try FileStore.ensureCapacity()
             let sourceID = info.id
             let existing = try modelContext.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceID == sourceID }))
-            guard existing.isEmpty, !queueItems.contains(where: { $0.info.id == sourceID && $0.state != .failed && $0.state != .cancelled }) else {
+            let exactExists = existing.contains { $0.mediaType == self.mediaKind.rawValue && $0.quality == self.quality }
+            let exactQueued = queueItems.contains { $0.info.id == sourceID && $0.mediaType == self.mediaKind.rawValue && $0.quality == self.quality && $0.state != .failed && $0.state != .cancelled }
+            guard !exactExists, !exactQueued else {
                 errorMessage = localized("This media is already in your Library or download queue.", "Nội dung này đã có trong Thư viện hoặc hàng đợi tải.")
                 return
             }
@@ -247,6 +253,7 @@ final class DownloadViewModel: ObservableObject {
                 queueItems[updateIndex].downloadedBytes = job.downloadedBytes ?? 0
                 queueItems[updateIndex].totalBytes = job.totalBytes
                 queueItems[updateIndex].speedBytesPerSecond = job.speedBytesPerSecond
+                updateETA(at: updateIndex, id: id)
                 progress = queueItems[updateIndex].progress
                 statusText = job.status == "queued" ? localized("Queued…", "Đang chờ…") : localized("Downloading \(Int(job.progress))%", "Đang tải \(Int(job.progress))%")
                 if job.status == "cancelled" { queueItems[updateIndex].state = .cancelled; return }
@@ -256,6 +263,10 @@ final class DownloadViewModel: ObservableObject {
                     queueItems[updateIndex].state = .saving; statusText = localized("Saving to device…", "Đang lưu vào thiết bị…")
                     try FileStore.ensureCapacity(requiredBytes: job.totalBytes)
                     let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
+                    guard let savingIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[savingIndex].state != .cancelled else {
+                        try? FileManager.default.removeItem(at: localURL)
+                        return
+                    }
                     let item = MediaItem(sourceID: snapshot.info.id, sourceURL: snapshot.info.webpageURL, title: snapshot.info.title, channel: snapshot.info.channel, thumbnailURL: snapshot.info.thumbnail, duration: snapshot.info.duration, localFilename: localURL.lastPathComponent, mediaType: snapshot.mediaType, quality: snapshot.quality)
                     item.artworkFilename = await FileStore.saveArtwork(from: snapshot.info.thumbnail, sourceID: snapshot.info.id)
                     modelContext.insert(item); try modelContext.save()
@@ -264,6 +275,8 @@ final class DownloadViewModel: ObservableObject {
                     queueItems[finishedIndex].downloadedBytes = FileStore.fileSize(for: item)
                     queueItems[finishedIndex].totalBytes = queueItems[finishedIndex].downloadedBytes
                     queueItems[finishedIndex].speedBytesPerSecond = nil
+                    queueItems[finishedIndex].remainingSeconds = nil
+                    speedSamples[id] = nil
                     completedMessage = localized("Downloaded “\(snapshot.info.title)”.", "Đã tải “\(snapshot.info.title)”."); Haptics.success()
                     logger.info("completed source=\(snapshot.info.id, privacy: .public)")
                     break
@@ -289,6 +302,7 @@ final class DownloadViewModel: ObservableObject {
             }
             queueItems[failedIndex].state = .failed; queueItems[failedIndex].error = error.localizedDescription
             queueItems[failedIndex].speedBytesPerSecond = nil; errorMessage = error.localizedDescription
+            queueItems[failedIndex].remainingSeconds = nil; speedSamples[id] = nil
             logger.error("failed source=\(self.queueItems[failedIndex].info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
     }
@@ -302,6 +316,34 @@ final class DownloadViewModel: ObservableObject {
         if let apiError = error as? APIError, case .network = apiError { return true }
         if let code = (error as? APIError)?.statusCode { return [408, 429, 500, 502, 503, 504].contains(code) }
         return false
+    }
+
+    func estimatedSize(for info: MediaInfo) -> Int64? {
+        info.estimatedSizes?["\(mediaKind.rawValue):\(quality)"]
+    }
+
+    func variantExists(in items: [MediaItem], info: MediaInfo) -> Bool {
+        items.contains { $0.sourceID == info.id && $0.mediaType == mediaKind.rawValue && $0.quality == quality }
+    }
+
+    func hasOtherVariant(in items: [MediaItem], info: MediaInfo) -> Bool {
+        items.contains { $0.sourceID == info.id && ($0.mediaType != mediaKind.rawValue || $0.quality != quality) }
+    }
+
+    private func updateETA(at index: Int, id: UUID) {
+        guard let speed = queueItems[index].speedBytesPerSecond, speed > 0,
+              let total = queueItems[index].totalBytes, total > queueItems[index].downloadedBytes else {
+            queueItems[index].remainingSeconds = nil; return
+        }
+        var samples = speedSamples[id] ?? []
+        samples.append(speed)
+        samples = Array(samples.suffix(5))
+        speedSamples[id] = samples
+        guard samples.count >= 3 else { queueItems[index].remainingSeconds = nil; return }
+        let average = samples.reduce(0, +) / Double(samples.count)
+        let maxDeviation = samples.map { abs($0 - average) / average }.max() ?? 1
+        queueItems[index].remainingSeconds = maxDeviation <= 0.35
+            ? Double(total - queueItems[index].downloadedBytes) / average : nil
     }
 
     private var queueFileURL: URL {

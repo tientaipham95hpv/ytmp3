@@ -111,6 +111,17 @@ struct HomeView: View {
                     ForEach(downloads.mediaKind == .audio ? downloads.audioQualities : downloads.videoQualities, id: \.0) { Text($0.1).tag($0.0) }
                 }.pickerStyle(.menu)
             }
+            if let estimate = downloads.estimatedSize(for: info) {
+                Label("Estimated size: \(estimate.formattedBytes)", systemImage: "internaldrive")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if downloads.variantExists(in: items, info: info) {
+                Label("Already in Library at this format and quality", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.green)
+            } else if downloads.hasOtherVariant(in: items, info: info) {
+                Label("Another version is in Library. You can download this variant.", systemImage: "square.stack.3d.up")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Button {
                 Haptics.tap()
                 downloads.startDownload(modelContext: modelContext)
@@ -118,7 +129,8 @@ struct HomeView: View {
                 Label(downloads.isDownloading ? downloads.statusText : "Download", systemImage: downloads.mediaKind == .audio ? "waveform" : "video.fill")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent).controlSize(.large).disabled(downloads.isDownloading)
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(downloads.variantExists(in: items, info: info))
         }
         .padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
     }
