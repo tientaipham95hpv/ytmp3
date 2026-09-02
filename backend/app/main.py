@@ -84,18 +84,30 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _friendly_error(stderr: str) -> tuple[int, str]:
+    text = stderr.lower()
+    if "sign in to confirm you”re not a bot" in text or "not a bot" in text:
+        return 403, "YouTube đang chặn (xác minh bạn không phải bot). Thử lại sau hoặc dùng video khác."
+    if "video is unavailable" in text or "video unavailable" in text or "this video doesn”t exist" in text:
+        return 404, "Video không tồn tại hoặc đã bị ẩn/xóa."
+    if "no title found in player responses" in text:
+        return 403, "YouTube đang chặn (không lấy được thông tin video). Thử lại sau."
+    return 422, stderr.strip()[-1000:] or "Unable to read media metadata"
+
+
 @app.post("/api/media/info")
 async def media_info(request: URLRequest) -> dict:
     try:
         require_binary("yt-dlp")
         result = await asyncio.to_thread(
             run_command,
-            ["yt-dlp", "--dump-single-json", "--no-playlist", "--skip-download", request.url],
+            ["yt-dlp", "--js-runtimes", "deno", "--dump-single-json", "--no-playlist", "--skip-download", request.url],
         )
     except (RuntimeError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if result.returncode != 0:
-        raise HTTPException(status_code=422, detail=(result.stderr.strip() or "Unable to read media metadata")[-1000:])
+        status, detail = _friendly_error(result.stderr)
+        raise HTTPException(status_code=status, detail=detail)
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -126,7 +138,7 @@ def progress_from_line(line: str) -> float | None:
 
 def build_download_command(request: DownloadRequest, output_template: str) -> list[str]:
     base = [
-        "yt-dlp", "--no-playlist", "--newline", "--no-part", "--restrict-filenames",
+        "yt-dlp", "--js-runtimes", "deno", "--no-playlist", "--newline", "--no-part", "--restrict-filenames",
         "--progress-template", "download:%(progress._percent_str)s", "-o", output_template,
     ]
     if request.media_type == "audio":
