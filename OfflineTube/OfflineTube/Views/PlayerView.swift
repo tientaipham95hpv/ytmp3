@@ -154,50 +154,65 @@ private struct AudioControlsView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Playback Speed") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 72))], spacing: 10) {
-                        ForEach(speeds, id: \.self) { speed in
-                            Button { player.setSpeed(speed); Haptics.selection() } label: {
-                                Text("\(speed, specifier: "%g")×").font(.subheadline.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
-                            }
-                            .buttonStyle(.borderedProminent).tint(player.playbackSpeed == speed ? .accentColor : .secondary.opacity(0.25))
-                            .foregroundStyle(player.playbackSpeed == speed ? .white : .primary)
-                        }
-                    }.padding(.vertical, 4)
-                    Text("Uses AVPlayer spectral time-pitch processing to preserve voice and music quality.").font(.footnote).foregroundStyle(.secondary)
-                }
-
-                Section {
-                    Label("Realtime EQ needs AVAudioEngine", systemImage: "exclamationmark.shield.fill")
-                        .font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
-                    Text("OfflineTube keeps AVPlayer for video, Picture in Picture, background audio and Lock Screen reliability. Presets below are an interface preview and do not alter sound in this build.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-
-                Section("Equalizer Presets") {
-                    Picker("Preset Preview", selection: $previewPreset) {
-                        ForEach(EQPreset.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    equalizerPreview
-                    ForEach(EQPreset.allCases) { preset in
-                        HStack { Text(preset.rawValue); Spacer(); Text(preset == .flat ? "AVPlayer default" : "Requires Audio Engine").font(.caption).foregroundStyle(.secondary) }
-                    }
-                }
-
-                Section("Custom EQ") {
-                    ForEach(Array(["60", "250", "1K", "4K", "12K"].enumerated()), id: \.offset) { _, frequency in
-                        LabeledContent(frequency) { Slider(value: .constant(0.0), in: -12.0...12.0).disabled(true).frame(maxWidth: 210) }
-                    }
-                } footer: { Text("Disabled to avoid introducing a second audio pipeline that could desynchronize playback and remote controls.") }
-
-                Section("Balance & Normalization") {
-                    LabeledContent("Balance") { Slider(value: .constant(0.0), in: -1.0...1.0).disabled(true).frame(maxWidth: 180) }
-                    Toggle("Volume Normalization", isOn: .constant(false)).disabled(true)
-                } footer: { Text("AVPlayer does not expose realtime pan, multiband EQ, or loudness normalization. These controls require an AVAudioEngine migration.") }
+                playbackSpeedSection
+                compatibilitySection
+                presetSection
+                customEQSection
+                balanceSection
             }
             .navigationTitle("Audio Controls").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }.presentationDetents([.large])
+    }
+
+    private var playbackSpeedSection: some View {
+        Section("Playback Speed") {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 72))], spacing: 10) {
+                ForEach(speeds, id: \.self) { speed in speedButton(speed) }
+            }.padding(.vertical, 4)
+            Text("Uses AVPlayer spectral time-pitch processing to preserve voice and music quality.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private func speedButton(_ speed: Float) -> some View {
+        let selected = player.playbackSpeed == speed
+        return Button { player.setSpeed(speed); Haptics.selection() } label: {
+            Text("\(speed, specifier: "%g")×").font(.subheadline.bold()).frame(maxWidth: .infinity).padding(.vertical, 8)
+        }
+        .buttonStyle(.borderedProminent).tint(selected ? Color.accentColor : Color.secondary.opacity(0.25))
+        .foregroundStyle(selected ? Color.white : Color.primary)
+    }
+
+    private var compatibilitySection: some View {
+        Section {
+            Label("Realtime EQ needs AVAudioEngine", systemImage: "exclamationmark.shield.fill").font(.subheadline.weight(.semibold)).foregroundStyle(.orange)
+            Text("OfflineTube keeps AVPlayer for video, Picture in Picture, background audio and Lock Screen reliability. Presets below are an interface preview and do not alter sound in this build.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
+    private var presetSection: some View {
+        Section("Equalizer Presets") {
+            Picker("Preset Preview", selection: $previewPreset) { ForEach(EQPreset.allCases) { Text($0.rawValue).tag($0) } }
+            equalizerPreview
+            ForEach(EQPreset.allCases) { preset in
+                HStack { Text(preset.rawValue); Spacer(); Text(preset == .flat ? "AVPlayer default" : "Requires Audio Engine").font(.caption).foregroundStyle(.secondary) }
+            }
+        }
+    }
+
+    private var customEQSection: some View {
+        Section("Custom EQ") {
+            ForEach(["60", "250", "1K", "4K", "12K"], id: \.self) { frequency in
+                LabeledContent(frequency) { Slider(value: .constant(0.0), in: -12.0...12.0).disabled(true).frame(maxWidth: 210) }
+            }
+        } footer: { Text("Disabled to avoid introducing a second audio pipeline that could desynchronize playback and remote controls.") }
+    }
+
+    private var balanceSection: some View {
+        Section("Balance & Normalization") {
+            LabeledContent("Balance") { Slider(value: .constant(0.0), in: -1.0...1.0).disabled(true).frame(maxWidth: 180) }
+            Toggle("Volume Normalization", isOn: .constant(false)).disabled(true)
+        } footer: { Text("AVPlayer does not expose realtime pan, multiband EQ, or loudness normalization. These controls require an AVAudioEngine migration.") }
     }
 
     private var equalizerPreview: some View {
