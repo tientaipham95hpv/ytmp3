@@ -22,6 +22,10 @@ final class DownloadViewModel: ObservableObject {
     @Published var statusText = ""
     @Published var errorMessage: String?
     @Published var completedMessage: String?
+    @Published var currentJobID: String?
+    @Published var lastDownloadedItemID: UUID?
+
+    private var downloadTask: Task<Void, Never>?
 
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
@@ -51,10 +55,14 @@ final class DownloadViewModel: ObservableObject {
         errorMessage = nil
         completedMessage = nil
         statusText = "Đang tạo job…"
-        defer { isDownloading = false }
+        defer {
+            isDownloading = false
+            currentJobID = nil
+        }
 
         do {
             let created = try await APIClient.shared.createDownload(url: urlText, mediaType: mediaKind.rawValue, quality: quality)
+            currentJobID = created.id
             while true {
                 try Task.checkCancellation()
                 let job = try await APIClient.shared.job(id: created.id)
@@ -80,9 +88,11 @@ final class DownloadViewModel: ObservableObject {
                     )
                     modelContext.insert(item)
                     try modelContext.save()
+                    lastDownloadedItemID = item.id
                     progress = 1
                     statusText = "Hoàn tất"
                     completedMessage = "Đã lưu “\(info.title)” vào Library."
+                    Haptics.success()
                     return
                 }
                 try await Task.sleep(nanoseconds: 1_000_000_000)
@@ -93,5 +103,20 @@ final class DownloadViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             statusText = ""
         }
+    }
+
+    func startDownload(modelContext: ModelContext) {
+        guard !isDownloading else { return }
+        downloadTask = Task { await download(modelContext: modelContext) }
+    }
+
+    func cancelDownload() {
+        downloadTask?.cancel()
+        downloadTask = nil
+    }
+
+    func retry(modelContext: ModelContext) {
+        errorMessage = nil
+        startDownload(modelContext: modelContext)
     }
 }

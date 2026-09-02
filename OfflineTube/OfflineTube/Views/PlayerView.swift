@@ -4,62 +4,125 @@ import SwiftUI
 struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var player: PlayerManager
+    @State private var sleepSheet = false
+    @State private var showVideoFullscreen = false
 
     var body: some View {
         NavigationStack {
-            Group {
-                if let item = player.currentItem {
-                    VStack(spacing: 24) {
-                        if item.isVideo {
-                            VideoPlayer(player: player.player)
-                                .aspectRatio(16 / 9, contentMode: .fit)
-                                .clipShape(RoundedRectangle(cornerRadius: 14))
-                        } else {
-                            AsyncImage(url: item.thumbnailURL.flatMap(URL.init(string:))) { phase in
-                                if let image = phase.image { image.resizable().scaledToFill() }
-                                else { Color.secondary.opacity(0.15).overlay { Image(systemName: "music.note").font(.system(size: 60)) } }
-                            }
-                            .aspectRatio(1, contentMode: .fit)
-                            .clipShape(RoundedRectangle(cornerRadius: 18))
+            GeometryReader { proxy in
+                ScrollView {
+                    if let item = player.currentItem {
+                        VStack(spacing: 24) {
+                            media(item, width: proxy.size.width)
+                            metadata(item)
+                            timeline
+                            transport
+                            secondaryControls
                         }
-
-                        VStack(spacing: 6) {
-                            Text(item.title).font(.title3.bold()).multilineTextAlignment(.center)
-                            Text(item.channel).foregroundStyle(.secondary)
-                        }
-
-                        Slider(value: Binding(
-                            get: { min(player.currentTime, max(player.duration, 0)) },
-                            set: { player.seek(to: $0) }
-                        ), in: 0...max(player.duration, 1))
-
-                        HStack {
-                            Text(time(player.currentTime))
-                            Spacer()
-                            Text("-\(time(max(0, player.duration - player.currentTime)))")
-                        }.font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-
-                        HStack(spacing: 38) {
-                            Button { player.seek(to: player.currentTime - 15) } label: { Image(systemName: "gobackward.15") }
-                            Button { player.toggle() } label: {
-                                Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 62))
-                            }
-                            Button { player.seek(to: player.currentTime + 15) } label: { Image(systemName: "goforward.15") }
-                        }.font(.title)
-                        Spacer()
+                        .padding(.horizontal, 24).padding(.bottom, 28)
+                        .frame(minHeight: proxy.size.height)
+                    } else {
+                        ContentUnavailableView("Nothing Playing", systemImage: "play.slash")
+                            .frame(maxWidth: .infinity, minHeight: proxy.size.height)
                     }
-                    .padding()
-                } else {
-                    ContentUnavailableView("Không có media", systemImage: "play.slash")
                 }
+                .background(background)
             }
-            .navigationTitle("Now Playing").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Xong") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button { dismiss() } label: { Image(systemName: "chevron.down").font(.headline) } }
+                ToolbarItem(placement: .principal) { Text("Now Playing").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary) }
+                ToolbarItem(placement: .topBarTrailing) { Menu { Button("End Sleep Timer") { player.setSleepTimer(minutes: nil) }.disabled(player.sleepTimerEnd == nil) } label: { Image(systemName: "ellipsis.circle") } }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+        }
+        .sheet(isPresented: $sleepSheet) { SleepTimerSheet() }
+        .fullScreenCover(isPresented: $showVideoFullscreen) {
+            ZStack(alignment: .topTrailing) {
+                Color.black.ignoresSafeArea()
+                PlayerController(player: player.player).ignoresSafeArea()
+                Button { showVideoFullscreen = false } label: { Image(systemName: "xmark.circle.fill").font(.largeTitle).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.45)) }.padding()
+            }.statusBarHidden()
         }
     }
 
-    private func time(_ value: Double) -> String {
-        let seconds = max(0, Int(value.isFinite ? value : 0))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    @ViewBuilder private func media(_ item: MediaItem, width: CGFloat) -> some View {
+        if item.isVideo {
+            ZStack(alignment: .bottomTrailing) {
+                PlayerController(player: player.player).aspectRatio(16 / 9, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 18))
+                Button { showVideoFullscreen = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").padding(10).background(.ultraThinMaterial, in: Circle()) }.padding(10)
+            }
+        } else {
+            ArtworkView(url: item.thumbnailURL, cornerRadius: 24)
+                .frame(width: min(width - 48, 390), height: min(width - 48, 390))
+                .shadow(color: .black.opacity(0.28), radius: 24, y: 14)
+        }
+    }
+
+    private func metadata(_ item: MediaItem) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(item.title).font(.title2.bold()).lineLimit(2)
+            Text(item.channel).font(.title3).foregroundStyle(.tint).lineLimit(1)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var timeline: some View {
+        VStack(spacing: 7) {
+            Slider(value: Binding(get: { min(player.currentTime, max(player.duration, 0)) }, set: { player.seek(to: $0) }), in: 0...max(player.duration, 1))
+            HStack { Text(player.currentTime.mediaTime); Spacer(); Text("-\(max(0, player.duration - player.currentTime).mediaTime)") }
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
+    }
+
+    private var transport: some View {
+        HStack(spacing: 28) {
+            Button { player.skip(by: -10) } label: { Image(systemName: "gobackward.10") }
+            Button { player.previous() } label: { Image(systemName: "backward.fill") }
+            Button { player.toggle(); Haptics.tap() } label: { Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 68)) }
+            Button { player.next() } label: { Image(systemName: "forward.fill") }
+            Button { player.skip(by: 10) } label: { Image(systemName: "goforward.10") }
+        }.font(.title2).buttonStyle(.plain)
+    }
+
+    private var secondaryControls: some View {
+        HStack {
+            Button { player.isShuffling.toggle() } label: { Image(systemName: "shuffle").foregroundStyle(player.isShuffling ? Color.accentColor : .primary) }.frame(maxWidth: .infinity)
+            Menu {
+                ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { speed in Button("\(speed, specifier: "%g")×") { player.setSpeed(Float(speed)) } }
+            } label: { Text("\(player.playbackSpeed, specifier: "%g")×").font(.subheadline.bold()).frame(maxWidth: .infinity) }
+            Button { sleepSheet = true } label: { Image(systemName: player.sleepTimerEnd == nil ? "moon.zzz" : "moon.zzz.fill") }.frame(maxWidth: .infinity)
+            Button { player.cycleRepeatMode() } label: {
+                Image(systemName: player.repeatMode.icon).foregroundStyle(player.repeatMode == .off ? .primary : Color.accentColor)
+            }.frame(maxWidth: .infinity)
+        }.font(.title3).buttonStyle(.plain).padding(.top, 4)
+    }
+
+    private var background: some View {
+        LinearGradient(colors: [Color.accentColor.opacity(0.16), Color(.systemBackground)], startPoint: .top, endPoint: .center).ignoresSafeArea()
+    }
+}
+
+struct PlayerController: UIViewControllerRepresentable {
+    let player: AVPlayer
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.allowsPictureInPicturePlayback = true
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+        controller.entersFullScreenWhenPlaybackBegins = false
+        return controller
+    }
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) { controller.player = player }
+}
+
+private struct SleepTimerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var player: PlayerManager
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in Button("\(minutes) minutes") { player.setSleepTimer(minutes: minutes); dismiss() } }
+                Button("Off", role: .destructive) { player.setSleepTimer(minutes: nil); dismiss() }
+            }.navigationTitle("Sleep Timer").navigationBarTitleDisplayMode(.inline)
+        }.presentationDetents([.medium])
     }
 }

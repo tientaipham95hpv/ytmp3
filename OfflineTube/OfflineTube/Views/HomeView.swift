@@ -1,0 +1,148 @@
+import SwiftData
+import SwiftUI
+import UIKit
+
+struct HomeView: View {
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var player: PlayerManager
+    @EnvironmentObject private var downloads: DownloadViewModel
+    @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
+    @FocusState private var isURLFocused: Bool
+
+    private var recentlyPlayed: [MediaItem] {
+        items.filter { $0.lastPlayedAt != nil }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 26) {
+                greeting
+                pasteCard
+                if downloads.isLoadingInfo { metadataSkeleton }
+                if let info = downloads.mediaInfo { mediaCard(info) }
+                mediaSection("Recent Downloads", items: Array(items.prefix(8)))
+                mediaSection("Recently Played", items: Array(recentlyPlayed.prefix(8)))
+            }
+            .padding(.horizontal, 18)
+            .padding(.bottom, 24)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .navigationTitle("Home")
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { isURLFocused = false }
+            }
+        }
+        .alert("OfflineTube", isPresented: Binding(get: { downloads.errorMessage != nil }, set: { if !$0 { downloads.errorMessage = nil } })) {
+            Button("OK", role: .cancel) { downloads.errorMessage = nil }
+        } message: { Text(downloads.errorMessage ?? "Unknown error") }
+    }
+
+    private var greeting: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Your music, offline.").font(.largeTitle.bold())
+            Text("Paste a YouTube link and keep it with you.").foregroundStyle(.secondary)
+        }
+        .padding(.top, 4)
+    }
+
+    private var pasteCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Paste URL", systemImage: "link").font(.headline)
+            HStack(spacing: 10) {
+                TextField("youtube.com/watch…", text: $downloads.urlText)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    .submitLabel(.go).focused($isURLFocused).onSubmit(fetchInfo)
+                if !downloads.urlText.isEmpty {
+                    Button { downloads.urlText = ""; downloads.mediaInfo = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                }
+                Button {
+                    if let value = UIPasteboard.general.string { downloads.urlText = value }
+                    fetchInfo()
+                } label: { Image(systemName: "doc.on.clipboard.fill") }
+            }
+            .padding(13).background(.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 13))
+            Button(action: fetchInfo) {
+                Label(downloads.isLoadingInfo ? "Reading video…" : "Continue", systemImage: "arrow.right.circle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.large)
+            .disabled(downloads.isLoadingInfo || downloads.urlText.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(18)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var metadataSkeleton: some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 12).fill(.quaternary).frame(width: 126, height: 78)
+            VStack(alignment: .leading, spacing: 10) {
+                RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(height: 14)
+                RoundedRectangle(cornerRadius: 4).fill(.quaternary).frame(width: 120, height: 12)
+            }
+        }
+        .redacted(reason: .placeholder).shimmering()
+    }
+
+    private func mediaCard(_ info: MediaInfo) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            ArtworkView(url: info.thumbnail, isVideo: true, cornerRadius: 18).frame(height: 190)
+            Text(info.title).font(.title3.bold()).lineLimit(2)
+            Text("\(info.channel) • \(info.duration.mediaTime)").font(.subheadline).foregroundStyle(.secondary)
+            Picker("Type", selection: $downloads.mediaKind) {
+                ForEach(DownloadViewModel.MediaKind.allCases) { Text($0.title).tag($0) }
+            }.pickerStyle(.segmented)
+            HStack {
+                Text("Quality").font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("Quality", selection: $downloads.quality) {
+                    ForEach(downloads.mediaKind == .audio ? downloads.audioQualities : downloads.videoQualities, id: \.0) { Text($0.1).tag($0.0) }
+                }.pickerStyle(.menu)
+            }
+            Button {
+                Haptics.tap()
+                downloads.startDownload(modelContext: modelContext)
+            } label: {
+                Label(downloads.isDownloading ? downloads.statusText : "Download", systemImage: downloads.mediaKind == .audio ? "waveform" : "video.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent).controlSize(.large).disabled(downloads.isDownloading)
+        }
+        .padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+    }
+
+    @ViewBuilder private func mediaSection(_ title: String, items: [MediaItem]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: title)
+            if items.isEmpty {
+                HStack { Image(systemName: "sparkles"); Text("Nothing here yet").foregroundStyle(.secondary); Spacer() }
+                    .padding().background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 14) {
+                        ForEach(items) { item in
+                            Button { player.play(item, queue: items) } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    ArtworkView(url: item.thumbnailURL, isVideo: item.isVideo).frame(width: 190, height: 110)
+                                    Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                    Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }.frame(width: 190, alignment: .leading)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func fetchInfo() {
+        isURLFocused = false
+        Haptics.tap()
+        Task { await downloads.fetchInfo() }
+    }
+}
+
+private extension View {
+    func shimmering() -> some View { opacity(0.72) }
+}

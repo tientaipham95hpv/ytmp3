@@ -17,6 +17,11 @@
 		B10000000000000000000009 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000009 /* LibraryView.swift */; };
 		B1000000000000000000000A /* MiniPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000A /* MiniPlayerView.swift */; };
 		B1000000000000000000000B /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000B /* PlayerView.swift */; };
+		B1000000000000000000000E /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000E /* DesignSystem.swift */; };
+		B1000000000000000000000F /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000000000000000000000F /* HomeView.swift */; };
+		B10000000000000000000010 /* PlaylistsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000010 /* PlaylistsView.swift */; };
+		B10000000000000000000011 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* DownloadsView.swift */; };
+		B10000000000000000000012 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,6 +38,11 @@
 		A1000000000000000000000B /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/PlayerView.swift; sourceTree = "<group>"; };
 		A1000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Resources/Info.plist; sourceTree = "<group>"; };
 		A1000000000000000000000D /* OfflineTube.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OfflineTube.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000000000000000000000E /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/DesignSystem.swift; sourceTree = "<group>"; };
+		A1000000000000000000000F /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/HomeView.swift; sourceTree = "<group>"; };
+		A10000000000000000000010 /* PlaylistsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/PlaylistsView.swift; sourceTree = "<group>"; };
+		A10000000000000000000011 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/DownloadsView.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -41,7 +51,7 @@
 
 /* Begin PBXGroup section */
 		D10000000000000000000001 = {isa = PBXGroup; children = (D10000000000000000000002 /* OfflineTube */, D10000000000000000000003 /* Products */); sourceTree = "<group>"; };
-		D10000000000000000000002 /* OfflineTube */ = {isa = PBXGroup; path = OfflineTube; sourceTree = "<group>"; children = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000C); };
+		D10000000000000000000002 /* OfflineTube */ = {isa = PBXGroup; path = OfflineTube; sourceTree = "<group>"; children = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000E, A1000000000000000000000F, A10000000000000000000010, A10000000000000000000011, A10000000000000000000012, A1000000000000000000000C); };
 		D10000000000000000000003 /* Products */ = {isa = PBXGroup; children = (A1000000000000000000000D /* OfflineTube.app */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -58,7 +68,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		C10000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000003, B10000000000000000000004, B10000000000000000000005, B10000000000000000000006, B10000000000000000000007, B10000000000000000000008, B10000000000000000000009, B1000000000000000000000A, B1000000000000000000000B); runOnlyForDeploymentPostprocessing = 0; };
+		C10000000000000000000002 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000001, B10000000000000000000002, B10000000000000000000003, B10000000000000000000004, B10000000000000000000005, B10000000000000000000006, B10000000000000000000007, B10000000000000000000008, B10000000000000000000009, B1000000000000000000000A, B1000000000000000000000B, B1000000000000000000000E, B1000000000000000000000F, B10000000000000000000010, B10000000000000000000011, B10000000000000000000012); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

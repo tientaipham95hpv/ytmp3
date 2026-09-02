@@ -19,4 +19,27 @@ enum FileStore {
             try FileManager.default.removeItem(at: item.localURL)
         }
     }
+
+    static func fileSize(for item: MediaItem) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: item.localURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    static func storageUsage() -> Int64 {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: downloadsDirectory,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+        return urls.reduce(0) { result, url in
+            result + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+    }
+
+    static func clearOrphanedFiles(keeping items: [MediaItem]) throws {
+        let filenames = Set(items.map(\.localFilename))
+        let urls = try FileManager.default.contentsOfDirectory(at: downloadsDirectory, includingPropertiesForKeys: nil)
+        for url in urls where !filenames.contains(url.lastPathComponent) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
 }
