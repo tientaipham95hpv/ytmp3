@@ -18,6 +18,7 @@ final class PlayerManager: ObservableObject {
     let player = AVPlayer()
     @Published private(set) var currentItem: MediaItem?
     @Published private(set) var queue: [MediaItem] = []
+    @Published private(set) var originalQueue: [MediaItem] = []
     @Published private(set) var isPlaying = false
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
@@ -36,6 +37,7 @@ final class PlayerManager: ObservableObject {
 
     private struct PersistedSession: Codable {
         let queueIDs: [UUID]
+        let originalQueueIDs: [UUID]?
         let currentID: UUID?
         let isShuffling: Bool
         let repeatMode: String
@@ -57,8 +59,13 @@ final class PlayerManager: ObservableObject {
 
     func play(_ item: MediaItem, queue newQueue: [MediaItem]? = nil) {
         guard FileManager.default.fileExists(atPath: item.localURL.path) else { return }
-        if let newQueue { queue = newQueue.filter(\.isAvailableOffline) }
-        if queue.isEmpty { queue = [item] }
+        if let newQueue {
+            originalQueue = deduplicated(newQueue.filter(\.isAvailableOffline))
+            queue = isShuffling ? shuffledQueue(originalQueue, keeping: item) : originalQueue
+        }
+        if queue.isEmpty { queue = [item]; originalQueue = [item] }
+        if !queue.contains(where: { $0.id == item.id }) { queue.append(item) }
+        if !originalQueue.contains(where: { $0.id == item.id }) { originalQueue.append(item) }
         if currentItem?.id != item.id {
             currentItem = item
             item.lastPlayedAt = Date()
@@ -80,8 +87,10 @@ final class PlayerManager: ObservableObject {
     func playAll(_ items: [MediaItem], shuffled: Bool = false) {
         guard !items.isEmpty else { return }
         isShuffling = shuffled
-        let newQueue = shuffled ? items.shuffled() : items
-        play(newQueue[0], queue: newQueue)
+        originalQueue = deduplicated(items.filter(\.isAvailableOffline))
+        guard !originalQueue.isEmpty else { return }
+        queue = shuffled ? originalQueue.shuffled() : originalQueue
+        play(queue[0])
     }
 
     func toggle() { isPlaying ? pause() : resume() }
@@ -148,25 +157,53 @@ final class PlayerManager: ObservableObject {
 
     func toggleShuffle() {
         isShuffling.toggle()
-        guard let currentItem else { persistSession(); return }
-        let remaining = queue.filter { $0.id != currentItem.id }
-        queue = [currentItem] + (isShuffling ? remaining.shuffled() : remaining)
+        guard let currentItem else {
+            queue = isShuffling ? originalQueue.shuffled() : originalQueue
+            persistSession(); return
+        }
+        queue = isShuffling ? shuffledQueue(originalQueue, keeping: currentItem) : originalQueue
         persistSession()
     }
 
     func moveQueue(from source: IndexSet, to destination: Int) {
         queue.move(fromOffsets: source, toOffset: destination)
+        originalQueue = queue
+        isShuffling = false
         persistSession()
     }
 
     func removeFromQueue(at offsets: IndexSet) {
         let currentID = currentItem?.id
+        let removedIDs = Set(offsets.compactMap { queue.indices.contains($0) ? queue[$0].id : nil })
         queue.remove(atOffsets: offsets)
+        originalQueue.removeAll { removedIDs.contains($0.id) }
         if let currentID, !queue.contains(where: { $0.id == currentID }) {
             player.replaceCurrentItem(with: nil)
             currentItem = nil; currentTime = 0; duration = 0; isPlaying = false
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         }
+        persistSession()
+    }
+
+    func playNext(_ item: MediaItem) {
+        guard item.isAvailableOffline, item.id != currentItem?.id else { return }
+        let currentID = currentItem?.id
+        Self.insert(item, after: currentID, into: &queue)
+        Self.insert(item, after: currentID, into: &originalQueue)
+        persistSession()
+    }
+
+    func playLater(_ item: MediaItem) {
+        guard item.isAvailableOffline, item.id != currentItem?.id else { return }
+        queue.removeAll { $0.id == item.id }; queue.append(item)
+        originalQueue.removeAll { $0.id == item.id }; originalQueue.append(item)
+        persistSession()
+    }
+
+    func clearQueue() {
+        if let currentItem { queue = [currentItem]; originalQueue = [currentItem] }
+        else { queue = []; originalQueue = [] }
+        isShuffling = false
         persistSession()
     }
 
@@ -195,6 +232,7 @@ final class PlayerManager: ObservableObject {
 
     func stopIfPlaying(_ item: MediaItem) {
         queue.removeAll { $0.id == item.id }
+        originalQueue.removeAll { $0.id == item.id }
         guard currentItem?.id == item.id else { persistSession(); return }
         pause()
         player.replaceCurrentItem(with: nil)
@@ -271,7 +309,7 @@ final class PlayerManager: ObservableObject {
 
     private func persistSession() {
         let session = PersistedSession(
-            queueIDs: queue.map(\.id), currentID: currentItem?.id,
+            queueIDs: queue.map(\.id), originalQueueIDs: originalQueue.map(\.id), currentID: currentItem?.id,
             isShuffling: isShuffling, repeatMode: repeatMode.rawValue,
             playbackSpeed: playbackSpeed
         )
@@ -285,6 +323,7 @@ final class PlayerManager: ObservableObject {
               let allItems = try? modelContext.fetch(FetchDescriptor<MediaItem>()) else { return }
         let available = Dictionary(uniqueKeysWithValues: allItems.filter(\.isAvailableOffline).map { ($0.id, $0) })
         queue = session.queueIDs.compactMap { available[$0] }
+        originalQueue = (session.originalQueueIDs ?? session.queueIDs).compactMap { available[$0] }
         isShuffling = session.isShuffling
         repeatMode = RepeatMode(rawValue: session.repeatMode) ?? .off
         playbackSpeed = session.playbackSpeed
@@ -300,6 +339,24 @@ final class PlayerManager: ObservableObject {
         player.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600))
         observeEnd(of: playerItem)
         updateNowPlaying()
+    }
+
+    private func deduplicated(_ items: [MediaItem]) -> [MediaItem] {
+        var seen = Set<UUID>()
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
+    private func shuffledQueue(_ items: [MediaItem], keeping current: MediaItem) -> [MediaItem] {
+        [current] + items.filter { $0.id != current.id }.shuffled()
+    }
+
+    private static func insert(_ item: MediaItem, after currentID: UUID?, into items: inout [MediaItem]) {
+        items.removeAll { $0.id == item.id }
+        if let currentID, let index = items.firstIndex(where: { $0.id == currentID }) {
+            items.insert(item, at: min(index + 1, items.endIndex))
+        } else {
+            items.insert(item, at: 0)
+        }
     }
 
     private func observeAudioSession() {

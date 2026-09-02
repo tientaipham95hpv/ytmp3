@@ -141,6 +141,9 @@ struct LibraryView: View {
     }
 
     @ViewBuilder private func menu(_ item: MediaItem) -> some View {
+        Button { player.playNext(item); Haptics.selection() } label: { Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+        Button { player.playLater(item); Haptics.selection() } label: { Label("Play Later", systemImage: "text.append") }
+        Divider()
         Button { item.isFavorite.toggle(); save() } label: {
             Label { Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite")) } icon: { Image(systemName: item.isFavorite ? "heart.slash" : "heart") }
         }

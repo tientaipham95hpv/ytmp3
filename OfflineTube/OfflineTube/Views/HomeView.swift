@@ -165,6 +165,8 @@ struct HomeView: View {
                             }.buttonStyle(.plain)
                                 .contextMenu {
                                     Button { player.play(item, queue: items) } label: { Label("Play", systemImage: "play.fill") }
+                                    Button { player.playNext(item) } label: { Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+                                    Button { player.playLater(item) } label: { Label("Play Later", systemImage: "text.append") }
                                     ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
                                 }
                         }

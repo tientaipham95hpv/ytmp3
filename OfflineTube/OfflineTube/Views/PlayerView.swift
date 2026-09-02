@@ -118,7 +118,11 @@ struct PlayerView: View {
 
 private struct UpNextSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
+    @State private var showSave = false
+    @State private var playlistName = ""
+    @State private var showClear = false
 
     var body: some View {
         NavigationStack {
@@ -126,6 +130,17 @@ private struct UpNextSheet: View {
                 if player.queue.isEmpty {
                     ContentUnavailableView("Queue is empty", systemImage: "text.line.first.and.arrowtriangle.forward")
                 } else {
+                    Section {
+                        HStack {
+                            Label("\(max(0, player.queue.count - 1)) Up Next", systemImage: player.isShuffling ? "shuffle" : "text.line.first.and.arrowtriangle.forward")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Menu {
+                                Button { playlistName = ""; showSave = true } label: { Label("Save Queue as Playlist", systemImage: "text.badge.plus") }
+                                Button(role: .destructive) { showClear = true } label: { Label("Clear Queue", systemImage: "trash") }
+                            } label: { Image(systemName: "ellipsis.circle") }
+                        }
+                    }
                     ForEach(player.queue) { item in
                         Button { player.play(item) } label: {
                             HStack(spacing: 12) {
@@ -138,6 +153,17 @@ private struct UpNextSheet: View {
                                 if player.currentItem?.id == item.id { Image(systemName: "speaker.wave.2.fill").foregroundStyle(.tint) }
                             }
                         }.buttonStyle(.plain)
+                            .contextMenu {
+                                Button { player.playNext(item) } label: { Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
+                                Button { player.playLater(item) } label: { Label("Play Later", systemImage: "text.append") }
+                            }
+                            .swipeActions {
+                                if player.currentItem?.id != item.id {
+                                    Button(role: .destructive) {
+                                        if let index = player.queue.firstIndex(where: { $0.id == item.id }) { player.removeFromQueue(at: IndexSet(integer: index)) }
+                                    } label: { Label("Remove", systemImage: "trash") }
+                                }
+                            }
                     }
                     .onMove(perform: player.moveQueue)
                     .onDelete(perform: player.removeFromQueue)
@@ -149,6 +175,23 @@ private struct UpNextSheet: View {
                 ToolbarItem(placement: .primaryAction) { EditButton() }
             }
         }
+        .alert("Save Queue as Playlist", isPresented: $showSave) {
+            TextField("Playlist name", text: $playlistName)
+            Button("Save") { saveQueue() }.disabled(playlistName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Clear everything after the current item?", isPresented: $showClear, titleVisibility: .visible) {
+            Button("Clear Queue", role: .destructive) { player.clearQueue(); Haptics.success() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func saveQueue() {
+        let items = player.originalQueue.isEmpty ? player.queue : player.originalQueue
+        let playlist = MediaPlaylist(name: playlistName.trimmingCharacters(in: .whitespacesAndNewlines), itemIDs: items.map(\.id))
+        modelContext.insert(playlist)
+        try? modelContext.save()
+        Haptics.success()
     }
 }
 
