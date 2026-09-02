@@ -30,6 +30,8 @@ make update-cookies FILE=/path/to/cookies.txt
 
 The command validates the Netscape file, installs it with mode `600`, restarts the backend, and performs a real YouTube metadata check. If verification fails, it restores the previous cookie automatically.
 
+Provision the private per-device API token with `make provision-api-token`. The token file is mounted from `secrets/`, ignored by Git, and required as a Bearer token for all `/api/` routes once present. Store it in the app under Settings → Server Security. The same protected section can upload and verify a replacement Netscape YouTube cookie without SSH access.
+
 ## iOS
 
 Open `OfflineTube/OfflineTube.xcodeproj` in Xcode 16+, select the `OfflineTube` scheme, and run on iOS 17+. Background audio mode and lock-screen remote controls are configured. Downloaded files live under Application Support and the SwiftData library tracks metadata/playback position.
