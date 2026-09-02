@@ -4,6 +4,7 @@ import SwiftData
 struct DownloadView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var viewModel = DownloadViewModel()
+    @FocusState private var isURLFieldFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -14,7 +15,10 @@ struct DownloadView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Button("Lấy info") { Task { await viewModel.fetchInfo() } }
+                        .focused($isURLFieldFocused)
+                        .submitLabel(.done)
+                        .onSubmit { fetchInfo() }
+                    Button("Lấy info") { fetchInfo() }
                         .buttonStyle(.borderedProminent)
                         .disabled(viewModel.isLoadingInfo || viewModel.isDownloading)
                 }
@@ -38,6 +42,18 @@ struct DownloadView: View {
             .padding()
         }
         .navigationTitle("OfflineTube")
+        .scrollDismissesKeyboard(.interactively)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Xong") { isURLFieldFocused = false }
+            }
+        }
+    }
+
+    private func fetchInfo() {
+        isURLFieldFocused = false
+        Task { await viewModel.fetchInfo() }
     }
 
     @ViewBuilder
@@ -63,6 +79,7 @@ struct DownloadView: View {
             }.pickerStyle(.menu)
 
             Button {
+                isURLFieldFocused = false
                 Task { await viewModel.download(modelContext: modelContext) }
             } label: {
                 Label("Tải xuống", systemImage: viewModel.mediaKind == .audio ? "waveform" : "video")

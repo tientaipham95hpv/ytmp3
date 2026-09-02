@@ -20,6 +20,8 @@ docker compose up -d --build
 
 Or use the Python setup in `backend/README.md`. The production app defaults to `https://offlinetube.cineviet.live`; the backend runs in Docker behind Nginx on loopback port `18080` with a persistent volume and restarts automatically after Docker/VPS restarts.
 
+If YouTube requests bot verification, export authenticated YouTube cookies in Netscape format to `secrets/youtube-cookies.txt`, then restart the backend. The private secrets directory is mounted only into the backend and ignored by Git; never commit or share it publicly.
+
 ## iOS
 
 Open `OfflineTube/OfflineTube.xcodeproj` in Xcode 16+, select the `OfflineTube` scheme, and run on iOS 17+. Background audio mode and lock-screen remote controls are configured. Downloaded files live under Application Support and the SwiftData library tracks metadata/playback position.

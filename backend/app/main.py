@@ -27,14 +27,23 @@ files: dict[str, Path] = {}
 active_tasks: set[asyncio.Task] = set()
 state_lock = Lock()
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
+YOUTUBE_COOKIES_FILE = Path(os.getenv("YOUTUBE_COOKIES_FILE", "/run/secrets/youtube-cookies.txt"))
 
 
 def yt_dlp_common_args() -> list[str]:
-    return [
+    args = [
         "--js-runtimes", "deno",
+        "--remote-components", "ejs:github",
         "--extractor-args", f"youtubepot-bgutilhttp:base_url={POT_PROVIDER_URL}",
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--retry-sleep", "http:linear=1:5:3",
+        "--retry-sleep", "fragment:linear=1:5:3",
         "--sleep-requests", "1",
     ]
+    if YOUTUBE_COOKIES_FILE.is_file() and YOUTUBE_COOKIES_FILE.stat().st_size > 0:
+        args += ["--cookies", str(YOUTUBE_COOKIES_FILE)]
+    return args
 
 
 def utc_now() -> str:
@@ -201,7 +210,8 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
             files[file_id] = result_path
         update_job(job_id, status="completed", progress=100.0, file_id=file_id, filename=result_path.name)
     except Exception as exc:
-        update_job(job_id, status="failed", error=str(exc), progress=0.0)
+        _, detail = _friendly_error(str(exc))
+        update_job(job_id, status="failed", error=detail, progress=0.0)
 
 
 @app.post("/api/media/download", status_code=202)

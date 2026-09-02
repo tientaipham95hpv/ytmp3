@@ -42,8 +42,35 @@ def test_audio_and_video_commands():
     assert "height<=720" in video_command[video_command.index("-f") + 1]
     assert "--recode-video" in video_command
     assert "--sleep-requests" in video_command
+    assert "--retries" in video_command
+    assert "--fragment-retries" in video_command
+    assert video_command[video_command.index("--remote-components") + 1] == "ejs:github"
     assert "--sleep-interval" in video_command
     assert "youtubepot-bgutilhttp:base_url=" in video_command[video_command.index("--extractor-args") + 1]
+
+
+def test_download_error_is_friendly(monkeypatch):
+    request = main.DownloadRequest(url="https://youtu.be/abc", media_type="audio", quality="original")
+    monkeypatch.setattr(main, "require_binary", lambda _: None)
+    monkeypatch.setattr(main.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("ERROR: Sign in to confirm you're not a bot")
+    ))
+    main.jobs["friendly"] = {}
+    main.execute_download("friendly", request)
+    assert "YouTube đang chặn" in main.jobs["friendly"]["error"]
+
+
+def test_cookie_file_is_used_when_present(tmp_path: Path, monkeypatch):
+    cookie_file = tmp_path / "youtube-cookies.txt"
+    cookie_file.write_text("# Netscape HTTP Cookie File\n")
+    monkeypatch.setattr(main, "YOUTUBE_COOKIES_FILE", cookie_file)
+    args = main.yt_dlp_common_args()
+    assert args[args.index("--cookies") + 1] == str(cookie_file)
+
+
+def test_missing_cookie_file_is_optional(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "YOUTUBE_COOKIES_FILE", tmp_path / "missing.txt")
+    assert "--cookies" not in main.yt_dlp_common_args()
 
 
 def test_file_endpoint_is_not_guessable(tmp_path: Path, monkeypatch):
