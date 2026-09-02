@@ -59,7 +59,8 @@ final class DownloadViewModel: ObservableObject {
 
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
-    private var workerTask: Task<Void, Never>?
+    private var workerTasks: [UUID: Task<Void, Never>] = [:]
+    private let maximumConcurrentDownloads = 2
     private var modelContext: ModelContext?
 
     init() { quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original" }
@@ -79,7 +80,7 @@ final class DownloadViewModel: ObservableObject {
         queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality))
         completedMessage = "Added “\(info.title)” to the queue."
         errorMessage = nil
-        startWorkerIfNeeded()
+        startWorkersIfNeeded()
     }
 
     func download(modelContext: ModelContext) async { startDownload(modelContext: modelContext) }
@@ -101,7 +102,7 @@ final class DownloadViewModel: ObservableObject {
         var retry = DownloadQueueItem(id: UUID(), url: item.url, info: item.info, mediaType: item.mediaType, quality: item.quality)
         retry.state = .queued
         queueItems.append(retry)
-        startWorkerIfNeeded()
+        startWorkersIfNeeded()
     }
 
     func retry(modelContext: ModelContext) {
@@ -115,12 +116,15 @@ final class DownloadViewModel: ObservableObject {
         for offset in offsets.sorted(by: >) where offset < removable.count { queueItems.remove(at: removable[offset]) }
     }
 
-    private func startWorkerIfNeeded() {
-        guard workerTask == nil else { return }
-        workerTask = Task { [weak self] in
-            await self?.processQueue()
-            self?.workerTask = nil
-            if self?.queueItems.contains(where: { $0.state == .queued }) == true { self?.startWorkerIfNeeded() }
+    private func startWorkersIfNeeded() {
+        while workerTasks.count < maximumConcurrentDownloads,
+              queueItems.contains(where: { $0.state == .queued }) {
+            let workerID = UUID()
+            workerTasks[workerID] = Task { [weak self] in
+                await self?.processQueue()
+                self?.workerTasks.removeValue(forKey: workerID)
+                self?.startWorkersIfNeeded()
+            }
         }
     }
 
@@ -128,7 +132,9 @@ final class DownloadViewModel: ObservableObject {
         while let id = queueItems.first(where: { $0.state == .queued })?.id {
             await processItem(id: id)
         }
-        isDownloading = false; progress = 0; statusText = ""
+        if !queueItems.contains(where: { $0.state == .downloading || $0.state == .saving }) {
+            isDownloading = false; progress = 0; statusText = ""
+        }
     }
 
     private func processItem(id: UUID) async {
