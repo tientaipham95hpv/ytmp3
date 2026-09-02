@@ -63,7 +63,10 @@ enum APIError: LocalizedError {
         }
     }
 
-    var statusCode: Int? { if case .http(let code, _) = self { code } else { nil } }
+    var statusCode: Int? {
+        if case .http(let code, _) = self { return code }
+        return nil
+    }
 }
 
 actor APIClient {
@@ -148,14 +151,14 @@ actor APIClient {
                 if let http = result.1 as? HTTPURLResponse,
                    [408, 429, 500, 502, 503, 504].contains(http.statusCode), attempt < 3 {
                     logger.warning("path=\(path, privacy: .public) HTTP=\(http.statusCode) retry=\(attempt + 1)")
-                    try await Task.sleep(for: .seconds(pow(2, Double(attempt))))
+                    try await sleepBeforeRetry(attempt: attempt)
                     continue
                 }
                 return result
             } catch let error as URLError where retryable(error) && attempt < 3 {
                 lastError = error
                 logger.warning("path=\(path, privacy: .public) network=\(error.code.rawValue) retry=\(attempt + 1)")
-                try await Task.sleep(for: .seconds(pow(2, Double(attempt))))
+                try await sleepBeforeRetry(attempt: attempt)
             } catch {
                 logger.error("path=\(path, privacy: .public) failed=\(error.localizedDescription, privacy: .public)")
                 throw error
@@ -166,6 +169,11 @@ actor APIClient {
 
     private func retryable(_ error: URLError) -> Bool {
         [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .resourceUnavailable].contains(error.code)
+    }
+
+    private func sleepBeforeRetry(attempt: Int) async throws {
+        let seconds = UInt64(1 << min(attempt, 3))
+        try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
     }
 
     func mediaInfo(url: String) async throws -> MediaInfo {
@@ -212,7 +220,7 @@ actor APIClient {
             catch let error as URLError where retryable(error) && attempt < 2 {
                 lastError = error
                 logger.warning("file download network=\(error.code.rawValue) retry=\(attempt + 1)")
-                try await Task.sleep(for: .seconds(pow(2, Double(attempt))))
+                try await sleepBeforeRetry(attempt: attempt)
             } catch { throw error }
         }
         throw APIError.network(lastError.localizedDescription)

@@ -32,6 +32,58 @@ struct DownloadQueueItem: Identifiable, Codable {
     var backendJobID: String?
     var error: String?
     var retryCount: Int = 0
+
+    enum CodingKeys: String, CodingKey {
+        case id, url, info, mediaType, quality, state, progress, downloadedBytes
+        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount
+    }
+
+    init(
+        id: UUID,
+        url: String,
+        info: MediaInfo,
+        mediaType: String,
+        quality: String,
+        state: State = .queued,
+        progress: Double = 0,
+        downloadedBytes: Int64 = 0,
+        totalBytes: Int64? = nil,
+        speedBytesPerSecond: Double? = nil,
+        backendJobID: String? = nil,
+        error: String? = nil,
+        retryCount: Int = 0
+    ) {
+        self.id = id
+        self.url = url
+        self.info = info
+        self.mediaType = mediaType
+        self.quality = quality
+        self.state = state
+        self.progress = progress
+        self.downloadedBytes = downloadedBytes
+        self.totalBytes = totalBytes
+        self.speedBytesPerSecond = speedBytesPerSecond
+        self.backendJobID = backendJobID
+        self.error = error
+        self.retryCount = retryCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        url = try values.decode(String.self, forKey: .url)
+        info = try values.decode(MediaInfo.self, forKey: .info)
+        mediaType = try values.decode(String.self, forKey: .mediaType)
+        quality = try values.decode(String.self, forKey: .quality)
+        state = try values.decodeIfPresent(State.self, forKey: .state) ?? .queued
+        progress = try values.decodeIfPresent(Double.self, forKey: .progress) ?? 0
+        downloadedBytes = try values.decodeIfPresent(Int64.self, forKey: .downloadedBytes) ?? 0
+        totalBytes = try values.decodeIfPresent(Int64.self, forKey: .totalBytes)
+        speedBytesPerSecond = try values.decodeIfPresent(Double.self, forKey: .speedBytesPerSecond)
+        backendJobID = try values.decodeIfPresent(String.self, forKey: .backendJobID)
+        error = try values.decodeIfPresent(String.self, forKey: .error)
+        retryCount = try values.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
+    }
 }
 
 @MainActor
