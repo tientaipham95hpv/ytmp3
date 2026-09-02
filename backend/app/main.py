@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import secrets
@@ -33,6 +34,8 @@ state_lock = Lock()
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 YOUTUBE_COOKIES_FILE = Path(os.getenv("YOUTUBE_COOKIES_FILE", "/run/secrets/youtube-cookies.txt"))
 API_ACCESS_TOKEN_FILE = Path(os.getenv("API_ACCESS_TOKEN_FILE", "/run/secrets/api-access-token.txt"))
+MIN_FREE_BYTES = int(os.getenv("MIN_FREE_BYTES", str(512 * 1024 * 1024)))
+logger = logging.getLogger("offlinetube.downloads")
 
 
 def yt_dlp_common_args(cookie_file: Path | None = None) -> list[str]:
@@ -45,6 +48,7 @@ def yt_dlp_common_args(cookie_file: Path | None = None) -> list[str]:
         "--retry-sleep", "http:linear=1:5:3",
         "--retry-sleep", "fragment:linear=1:5:3",
         "--sleep-requests", "1",
+        "--socket-timeout", "20",
     ]
     selected_cookie = cookie_file or YOUTUBE_COOKIES_FILE
     if selected_cookie.is_file() and selected_cookie.stat().st_size > 0:
@@ -139,6 +143,12 @@ def _friendly_error(stderr: str) -> tuple[int, str]:
     text = stderr.lower()
     if "sign in to confirm you”re not a bot" in text or "not a bot" in text:
         return 403, "YouTube đang chặn (xác minh bạn không phải bot). Thử lại sau hoặc dùng video khác."
+    if "private video" in text or "private" in text and "video" in text:
+        return 403, "Video riêng tư. Tài khoản cookie hiện tại không có quyền truy cập."
+    if "members-only" in text or "join this channel" in text:
+        return 403, "Video chỉ dành cho thành viên và tài khoản hiện tại không có quyền truy cập."
+    if "age-restricted" in text or "age restricted" in text:
+        return 403, "Video bị giới hạn độ tuổi và không thể tải bằng phiên hiện tại."
     if "video is unavailable" in text or "video unavailable" in text or "this video doesn”t exist" in text:
         return 404, "Video không tồn tại hoặc đã bị ẩn/xóa."
     if "no title found in player responses" in text:
@@ -250,8 +260,18 @@ def build_download_command(request: DownloadRequest, output_template: str) -> li
     return base + [request.url]
 
 
+def cleanup_job_files(job_id: str) -> None:
+    for path in DOWNLOAD_DIR.glob(f"{job_id}.*"):
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                logger.exception("job=%s failed to remove partial file", job_id)
+
+
 def execute_download(job_id: str, request: DownloadRequest) -> None:
     try:
+        logger.info("job=%s starting type=%s quality=%s", job_id, request.media_type, request.quality)
         require_binary("yt-dlp")
         require_binary("ffmpeg")
         output_template = str(DOWNLOAD_DIR / f"{job_id}.%(ext)s")
@@ -285,9 +305,12 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
         with state_lock:
             files[file_id] = result_path
         update_job(job_id, status="completed", progress=100.0, file_id=file_id, filename=result_path.name)
+        logger.info("job=%s completed file=%s", job_id, result_path.name)
     except Exception as exc:
         _, detail = _friendly_error(str(exc))
         update_job(job_id, status="failed", error=detail, progress=0.0)
+        cleanup_job_files(job_id)
+        logger.error("job=%s failed error=%s", job_id, detail)
     finally:
         with state_lock:
             active_processes.pop(job_id, None)
@@ -296,6 +319,9 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
 
 @app.post("/api/media/download", status_code=202)
 async def media_download(request: DownloadRequest) -> dict[str, str]:
+    free_bytes = shutil.disk_usage(DOWNLOAD_DIR).free
+    if free_bytes < MIN_FREE_BYTES:
+        raise HTTPException(status_code=507, detail="Máy chủ không đủ dung lượng trống để bắt đầu tải.")
     job_id = uuid.uuid4().hex
     now = utc_now()
     with state_lock:
@@ -329,9 +355,8 @@ async def cancel_job(job_id: str) -> dict[str, str]:
             await asyncio.to_thread(process.wait, 5)
         except subprocess.TimeoutExpired:
             process.kill()
-    for partial in DOWNLOAD_DIR.glob(f"{job_id}.*"):
-        if partial.is_file():
-            partial.unlink(missing_ok=True)
+    cleanup_job_files(job_id)
+    logger.info("job=%s cancelled", job_id)
     return {"id": job_id, "status": "cancelled"}
 
 

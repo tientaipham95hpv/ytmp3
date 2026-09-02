@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 struct MediaInfo: Codable, Sendable {
     let id: String
@@ -45,16 +46,24 @@ enum APIError: LocalizedError {
     case invalidServerURL
     case invalidResponse
     case server(String)
+    case http(Int, String)
+    case network(String)
     case missingResult
+    case insufficientStorage
 
     var errorDescription: String? {
         switch self {
         case .invalidServerURL: return "Địa chỉ backend không hợp lệ."
         case .invalidResponse: return "Backend trả về dữ liệu không hợp lệ."
         case .server(let message): return message
+        case .http(_, let message): return message
+        case .network(let message): return message
         case .missingResult: return "Job hoàn tất nhưng không có file kết quả."
+        case .insufficientStorage: return "Thiết bị không đủ dung lượng trống để lưu file tải xuống."
         }
     }
+
+    var statusCode: Int? { if case .http(let code, _) = self { code } else { nil } }
 }
 
 actor APIClient {
@@ -62,6 +71,7 @@ actor APIClient {
     private let session: URLSession
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
+    private let logger = Logger(subsystem: "com.personal.OfflineTube", category: "API")
 
     init(session: URLSession = .shared) {
         self.session = session
@@ -88,7 +98,7 @@ actor APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
         request.httpBody = try encoder.encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await performData(for: request, path: path)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -97,7 +107,7 @@ actor APIClient {
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
         authorize(&request)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await performData(for: request, path: path)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -108,7 +118,7 @@ actor APIClient {
         request.httpMethod = "POST"
         authorize(&request)
         request.timeoutInterval = 30
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await performData(for: request, path: path)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -119,10 +129,43 @@ actor APIClient {
         guard (200..<300).contains(http.statusCode) else {
             if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                let detail = object["detail"] as? String {
-                throw APIError.server(detail)
+                throw APIError.http(http.statusCode, detail)
             }
-            throw APIError.server("Backend error (HTTP \(http.statusCode)).")
+            if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let details = object["detail"] as? [[String: Any]],
+               let message = details.first?["msg"] as? String {
+                throw APIError.http(http.statusCode, message.replacingOccurrences(of: "Value error, ", with: ""))
+            }
+            throw APIError.http(http.statusCode, "Backend error (HTTP \(http.statusCode)).")
         }
+    }
+
+    private func performData(for request: URLRequest, path: String) async throws -> (Data, URLResponse) {
+        var lastError: Error = APIError.invalidResponse
+        for attempt in 0..<4 {
+            do {
+                let result = try await session.data(for: request)
+                if let http = result.1 as? HTTPURLResponse,
+                   [408, 429, 500, 502, 503, 504].contains(http.statusCode), attempt < 3 {
+                    logger.warning("path=\(path, privacy: .public) HTTP=\(http.statusCode) retry=\(attempt + 1)")
+                    try await Task.sleep(for: .seconds(pow(2, Double(attempt))))
+                    continue
+                }
+                return result
+            } catch let error as URLError where retryable(error) && attempt < 3 {
+                lastError = error
+                logger.warning("path=\(path, privacy: .public) network=\(error.code.rawValue) retry=\(attempt + 1)")
+                try await Task.sleep(for: .seconds(pow(2, Double(attempt))))
+            } catch {
+                logger.error("path=\(path, privacy: .public) failed=\(error.localizedDescription, privacy: .public)")
+                throw error
+            }
+        }
+        throw APIError.network(lastError.localizedDescription)
+    }
+
+    private func retryable(_ error: URLError) -> Bool {
+        [.timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .resourceUnavailable].contains(error.code)
     }
 
     func mediaInfo(url: String) async throws -> MediaInfo {
@@ -150,7 +193,7 @@ actor APIClient {
     func download(fileID: String, filename: String) async throws -> URL {
         var request = URLRequest(url: try endpoint("api/files/\(fileID)"))
         authorize(&request)
-        let (temporaryURL, response) = try await session.download(for: request)
+        let (temporaryURL, response) = try await performDownload(for: request)
         try validate(response: response, data: Data())
         let destination = FileStore.destination(filename: filename)
         do {
@@ -160,5 +203,18 @@ actor APIClient {
             try? FileManager.default.removeItem(at: destination)
             throw error
         }
+    }
+
+    private func performDownload(for request: URLRequest) async throws -> (URL, URLResponse) {
+        var lastError: Error = APIError.invalidResponse
+        for attempt in 0..<3 {
+            do { return try await session.download(for: request) }
+            catch let error as URLError where retryable(error) && attempt < 2 {
+                lastError = error
+                logger.warning("file download network=\(error.code.rawValue) retry=\(attempt + 1)")
+                try await Task.sleep(for: .seconds(pow(2, Double(attempt))))
+            } catch { throw error }
+        }
+        throw APIError.network(lastError.localizedDescription)
     }
 }

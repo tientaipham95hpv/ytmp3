@@ -117,3 +117,22 @@ def test_cookie_validation_rejects_wrong_domain():
         assert exc.status_code == 422
     else:
         raise AssertionError("Expected cookie validation to fail")
+
+
+def test_cleanup_job_files_removes_all_partial_outputs(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "DOWNLOAD_DIR", tmp_path)
+    (tmp_path / "job.part").write_text("partial")
+    (tmp_path / "job.mp4").write_text("partial")
+    (tmp_path / "other.mp4").write_text("keep")
+    main.cleanup_job_files("job")
+    assert not (tmp_path / "job.part").exists()
+    assert not (tmp_path / "job.mp4").exists()
+    assert (tmp_path / "other.mp4").exists()
+
+
+def test_download_rejects_when_server_disk_is_low(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(main, "DOWNLOAD_DIR", tmp_path)
+    monkeypatch.setattr(main, "MIN_FREE_BYTES", 100)
+    monkeypatch.setattr(main.shutil, "disk_usage", lambda _: type("Usage", (), {"free": 99})())
+    response = client.post("/api/media/download", json={"url": "https://youtu.be/abc", "media_type": "audio", "quality": "128"})
+    assert response.status_code == 507

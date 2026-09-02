@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import OSLog
 import SwiftData
 import SwiftUI
 
@@ -30,6 +31,7 @@ struct DownloadQueueItem: Identifiable, Codable {
     var speedBytesPerSecond: Double?
     var backendJobID: String?
     var error: String?
+    var retryCount: Int = 0
 }
 
 @MainActor
@@ -65,6 +67,7 @@ final class DownloadViewModel: ObservableObject {
     private var workerTasks: [UUID: Task<Void, Never>] = [:]
     private let maximumConcurrentDownloads = 2
     private var modelContext: ModelContext?
+    private let logger = Logger(subsystem: "com.personal.OfflineTube", category: "Downloads")
 
     init() {
         quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
@@ -94,7 +97,21 @@ final class DownloadViewModel: ObservableObject {
     func startDownload(modelContext: ModelContext) {
         guard let info = mediaInfo else { return }
         self.modelContext = modelContext
+        do {
+            try FileStore.ensureCapacity()
+            let sourceID = info.id
+            let existing = try modelContext.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceID == sourceID }))
+            guard existing.isEmpty, !queueItems.contains(where: { $0.info.id == sourceID && $0.state != .failed && $0.state != .cancelled }) else {
+                errorMessage = localized("This media is already in your Library or download queue.", "Nội dung này đã có trong Thư viện hoặc hàng đợi tải.")
+                return
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            logger.error("enqueue rejected source=\(info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            return
+        }
         queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality))
+        logger.info("queued source=\(info.id, privacy: .public) type=\(self.mediaKind.rawValue, privacy: .public)")
         completedMessage = localized("Added “\(info.title)” to the queue.", "Đã thêm “\(info.title)” vào hàng đợi.")
         errorMessage = nil
         startWorkersIfNeeded()
@@ -184,6 +201,7 @@ final class DownloadViewModel: ObservableObject {
                 if job.status == "completed" {
                     guard let fileID = job.fileID, let filename = job.filename else { throw APIError.missingResult }
                     queueItems[updateIndex].state = .saving; statusText = localized("Saving to device…", "Đang lưu vào thiết bị…")
+                    try FileStore.ensureCapacity(requiredBytes: job.totalBytes)
                     let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
                     let item = MediaItem(sourceID: snapshot.info.id, sourceURL: snapshot.info.webpageURL, title: snapshot.info.title, channel: snapshot.info.channel, thumbnailURL: snapshot.info.thumbnail, duration: snapshot.info.duration, localFilename: localURL.lastPathComponent, mediaType: snapshot.mediaType, quality: snapshot.quality)
                     modelContext.insert(item); try modelContext.save()
@@ -193,19 +211,43 @@ final class DownloadViewModel: ObservableObject {
                     queueItems[finishedIndex].totalBytes = queueItems[finishedIndex].downloadedBytes
                     queueItems[finishedIndex].speedBytesPerSecond = nil
                     completedMessage = localized("Downloaded “\(snapshot.info.title)”.", "Đã tải “\(snapshot.info.title)”."); Haptics.success()
+                    logger.info("completed source=\(snapshot.info.id, privacy: .public)")
                     break
                 }
                 try await Task.sleep(for: .seconds(1))
             }
         } catch {
             guard let failedIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[failedIndex].state != .cancelled else { return }
+            if let apiError = error as? APIError, apiError.statusCode == 404, queueItems[failedIndex].backendJobID != nil {
+                queueItems[failedIndex].backendJobID = nil
+                queueItems[failedIndex].state = .queued
+                queueItems[failedIndex].error = localized("Server restarted; recreating download job…", "Máy chủ vừa khởi động lại; đang tạo lại tác vụ tải…")
+                logger.warning("recovering missing backend job source=\(queueItems[failedIndex].info.id, privacy: .public)")
+                return
+            }
+            if isTransient(error), queueItems[failedIndex].retryCount < 5 {
+                queueItems[failedIndex].retryCount += 1
+                queueItems[failedIndex].state = .queued
+                queueItems[failedIndex].error = localized("Network interrupted. Retrying automatically…", "Mạng bị gián đoạn. Đang tự động thử lại…")
+                logger.warning("transient failure source=\(queueItems[failedIndex].info.id, privacy: .public) retry=\(queueItems[failedIndex].retryCount)")
+                try? await Task.sleep(for: .seconds(10))
+                return
+            }
             queueItems[failedIndex].state = .failed; queueItems[failedIndex].error = error.localizedDescription
             queueItems[failedIndex].speedBytesPerSecond = nil; errorMessage = error.localizedDescription
+            logger.error("failed source=\(queueItems[failedIndex].info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
         }
     }
 
     private func localized(_ english: String, _ vietnamese: String) -> String {
         UserDefaults.standard.string(forKey: "appLanguage") == AppLanguage.vietnamese.rawValue ? vietnamese : english
+    }
+
+    private func isTransient(_ error: Error) -> Bool {
+        if error is URLError { return true }
+        if let apiError = error as? APIError, case .network = apiError { return true }
+        if let code = (error as? APIError)?.statusCode { return [408, 429, 500, 502, 503, 504].contains(code) }
+        return false
     }
 
     private var queueFileURL: URL {
@@ -217,12 +259,16 @@ final class DownloadViewModel: ObservableObject {
     private func persistQueue() {
         let url = queueFileURL
         let snapshot = queueItems
-        Task.detached(priority: .utility) {
-            do {
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                let data = try JSONEncoder().encode(snapshot)
-                try data.write(to: url, options: .atomic)
-            } catch { print("Queue persistence failed: \(error.localizedDescription)") }
-        }
+        Task { await QueuePersistence.shared.save(snapshot, to: url) }
+    }
+}
+
+private actor QueuePersistence {
+    static let shared = QueuePersistence()
+    func save(_ queue: [DownloadQueueItem], to url: URL) {
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(queue).write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
+        } catch { Logger(subsystem: "com.personal.OfflineTube", category: "Downloads").error("queue persistence failed=\(error.localizedDescription, privacy: .public)") }
     }
 }

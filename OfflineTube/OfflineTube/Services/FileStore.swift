@@ -1,6 +1,7 @@
 import Foundation
 
 enum FileStore {
+    static let minimumFreeSpace: Int64 = 512 * 1024 * 1024
     static var downloadsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let directory = base.appendingPathComponent("OfflineTube/Downloads", isDirectory: true)
@@ -12,6 +13,17 @@ enum FileStore {
         let safeExtension = URL(fileURLWithPath: filename).pathExtension
         let name = UUID().uuidString + (safeExtension.isEmpty ? "" : ".\(safeExtension)")
         return downloadsDirectory.appendingPathComponent(name)
+    }
+
+    static func availableCapacity() -> Int64? {
+        let values = try? downloadsDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
+    static func ensureCapacity(requiredBytes: Int64? = nil) throws {
+        guard let available = availableCapacity() else { return }
+        let required = max(minimumFreeSpace, (requiredBytes ?? 0) + 100 * 1024 * 1024)
+        if available < required { throw APIError.insufficientStorage }
     }
 
     static func remove(_ item: MediaItem) throws {
