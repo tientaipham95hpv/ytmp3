@@ -22,6 +22,14 @@ Or use the Python setup in `backend/README.md`. The production app defaults to `
 
 If YouTube requests bot verification, export authenticated YouTube cookies in Netscape format to `secrets/youtube-cookies.txt`, then restart the backend. The private secrets directory is mounted only into the backend and ignored by Git; never commit or share it publicly.
 
+To replace cookies safely in one command, use:
+
+```bash
+make update-cookies FILE=/path/to/cookies.txt
+```
+
+The command validates the Netscape file, installs it with mode `600`, restarts the backend, and performs a real YouTube metadata check. If verification fails, it restores the previous cookie automatically.
+
 ## iOS
 
 Open `OfflineTube/OfflineTube.xcodeproj` in Xcode 16+, select the `OfflineTube` scheme, and run on iOS 17+. Background audio mode and lock-screen remote controls are configured. Downloaded files live under Application Support and the SwiftData library tracks metadata/playback position.
