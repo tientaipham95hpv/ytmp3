@@ -100,7 +100,22 @@
     "Share / Export" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chia sẻ / Xuất tệp" } } } },
     "Smart Playlists" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Playlist thông minh" } } } },
     "The token stays in iOS Keychain. Cookie files are verified by the server before replacing the active cookie." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Token được giữ trong Keychain iOS. Máy chủ kiểm tra file cookie trước khi thay cookie đang dùng." } } } },
-    "Unfinished" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa nghe xong" } } } }
+    "Unfinished" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chưa nghe xong" } } } },
+    "Choose cookies.txt" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn cookies.txt" } } } },
+    "Cookie Setup" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thiết lập cookie" } } } },
+    "Everything is done on your iPhone. Use a secondary YouTube account and never share the exported file." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mọi thao tác đều thực hiện trên iPhone. Hãy dùng tài khoản YouTube phụ và không chia sẻ file đã xuất." } } } },
+    "Export Netscape cookies" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Xuất cookie Netscape" } } } },
+    "From Safari’s Extensions menu, open Cookie-Editor, choose Export and select Netscape format. Save cookies.txt to Files." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Trong menu Tiện ích Safari, mở Cookie-Editor, chọn Export và định dạng Netscape. Lưu cookies.txt vào ứng dụng Tệp." } } } },
+    "Get cookies on iPhone" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Lấy cookie trên iPhone" } } } },
+    "Install Cookie-Editor" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Cài Cookie-Editor" } } } },
+    "Install the Safari extension, then enable it in Settings → Apps → Safari → Extensions." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Cài tiện ích Safari, sau đó bật tại Cài đặt → Ứng dụng → Safari → Tiện ích mở rộng." } } } },
+    "Open App Store" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mở App Store" } } } },
+    "Open YouTube" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mở YouTube" } } } },
+    "Open YouTube in Safari and sign in with a secondary account. Allow Cookie-Editor access to youtube.com." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Mở YouTube trong Safari và đăng nhập tài khoản phụ. Cho phép Cookie-Editor truy cập youtube.com." } } } },
+    "Select cookies.txt below. OfflineTube sends it over HTTPS; the server tests YouTube before replacing the active cookie." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn cookies.txt bên dưới. OfflineTube gửi file qua HTTPS; máy chủ thử YouTube trước khi thay cookie đang dùng." } } } },
+    "Sign in to YouTube" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đăng nhập YouTube" } } } },
+    "Update cookies without a computer" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Cập nhật cookie không cần máy tính" } } } },
+    "Verify and replace" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Kiểm tra và thay thế" } } } }
   },
   "version" : "1.0"
 }
