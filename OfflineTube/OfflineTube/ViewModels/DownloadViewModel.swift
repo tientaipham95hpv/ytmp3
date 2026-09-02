@@ -33,10 +33,11 @@ struct DownloadQueueItem: Identifiable, Codable {
     var error: String?
     var retryCount: Int = 0
     var remainingSeconds: Double?
+    var batchID: UUID?
 
     enum CodingKeys: String, CodingKey {
         case id, url, info, mediaType, quality, state, progress, downloadedBytes
-        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount, remainingSeconds
+        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount, remainingSeconds, batchID
     }
 
     init(
@@ -52,7 +53,8 @@ struct DownloadQueueItem: Identifiable, Codable {
         speedBytesPerSecond: Double? = nil,
         backendJobID: String? = nil,
         error: String? = nil,
-        retryCount: Int = 0
+        retryCount: Int = 0,
+        batchID: UUID? = nil
     ) {
         self.id = id
         self.url = url
@@ -68,6 +70,7 @@ struct DownloadQueueItem: Identifiable, Codable {
         self.error = error
         self.retryCount = retryCount
         self.remainingSeconds = nil
+        self.batchID = batchID
     }
 
     init(from decoder: Decoder) throws {
@@ -86,6 +89,7 @@ struct DownloadQueueItem: Identifiable, Codable {
         error = try values.decodeIfPresent(String.self, forKey: .error)
         retryCount = try values.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
         remainingSeconds = try values.decodeIfPresent(Double.self, forKey: .remainingSeconds)
+        batchID = try values.decodeIfPresent(UUID.self, forKey: .batchID)
     }
 }
 
@@ -113,6 +117,10 @@ final class DownloadViewModel: ObservableObject {
     @Published var statusText = ""
     @Published var errorMessage: String?
     @Published var completedMessage: String?
+    @Published var batchInfo: PlaylistInfo?
+    @Published var batchSelection = Set<String>()
+    @Published var isLoadingBatch = false
+    @Published var activeBatchID: UUID?
     @Published private(set) var queueItems: [DownloadQueueItem] = [] {
         didSet { persistQueue() }
     }
@@ -133,6 +141,7 @@ final class DownloadViewModel: ObservableObject {
                 saved[index].state = .queued
             }
             queueItems = saved
+            activeBatchID = saved.reversed().compactMap(\.batchID).first
         }
     }
 
@@ -148,6 +157,72 @@ final class DownloadViewModel: ObservableObject {
         defer { isLoadingInfo = false }
         do { mediaInfo = try await APIClient.shared.mediaInfo(url: value) }
         catch { mediaInfo = nil; errorMessage = error.localizedDescription }
+    }
+
+    func loadBatch(from text: String) async {
+        let urls = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !urls.isEmpty else { errorMessage = localized("Paste at least one YouTube URL.", "Hãy dán ít nhất một URL YouTube."); return }
+        isLoadingBatch = true; errorMessage = nil; batchInfo = nil; batchSelection = []
+        defer { isLoadingBatch = false }
+        do {
+            var entries: [MediaInfo] = []
+            var title = localized("Batch Download", "Tải hàng loạt")
+            for url in urls {
+                if url.contains("list=") || url.contains("/playlist") {
+                    let playlist = try await APIClient.shared.playlistInfo(url: url)
+                    title = playlist.title
+                    entries.append(contentsOf: playlist.entries)
+                } else {
+                    entries.append(try await APIClient.shared.mediaInfo(url: url))
+                }
+            }
+            var seen = Set<String>()
+            entries = entries.filter { seen.insert($0.id).inserted }
+            batchInfo = PlaylistInfo(id: UUID().uuidString, title: title, channel: "", thumbnail: entries.first?.thumbnail, entries: entries, totalEntries: entries.count, isTruncated: false)
+            batchSelection = Set(entries.map(\.id))
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    @discardableResult
+    func enqueueBatch(modelContext: ModelContext, downloadAgain: Bool) -> Int {
+        guard let batchInfo else { return 0 }
+        self.modelContext = modelContext
+        do {
+            try FileStore.cleanupTemporaryFiles(); try FileStore.ensureCapacity()
+            let existing = try modelContext.fetch(FetchDescriptor<MediaItem>())
+            let batchID = UUID()
+            var added = 0
+            for info in batchInfo.entries where batchSelection.contains(info.id) {
+                let exactExists = existing.contains { $0.sourceID == info.id && $0.mediaType == mediaKind.rawValue && $0.quality == quality }
+                let exactQueued = queueItems.contains { $0.info.id == info.id && $0.mediaType == mediaKind.rawValue && $0.quality == quality && ![.failed, .cancelled].contains($0.state) }
+                if !downloadAgain && (exactExists || exactQueued) { continue }
+                queueItems.append(DownloadQueueItem(id: UUID(), url: info.webpageURL, info: info, mediaType: mediaKind.rawValue, quality: quality, batchID: batchID))
+                added += 1
+            }
+            guard added > 0 else {
+                errorMessage = localized("Everything selected is already in your Library or queue.", "Các mục đã chọn đều có trong Thư viện hoặc hàng đợi.")
+                return 0
+            }
+            activeBatchID = batchID
+            completedMessage = localized("Added \(added) items to the download queue.", "Đã thêm \(added) mục vào hàng đợi tải.")
+            startWorkersIfNeeded()
+            return added
+        } catch { errorMessage = error.localizedDescription; return 0 }
+    }
+
+    func cancelBatch(_ batchID: UUID) {
+        let ids = queueItems.filter { $0.batchID == batchID && [.queued, .downloading, .saving].contains($0.state) }.map(\.id)
+        ids.forEach(cancel)
+    }
+
+    func batchItems(_ batchID: UUID) -> [DownloadQueueItem] { queueItems.filter { $0.batchID == batchID } }
+
+    func batchProgress(_ batchID: UUID) -> Double {
+        let items = batchItems(batchID)
+        guard !items.isEmpty else { return 0 }
+        return items.reduce(0) { $0 + ($1.state == .completed ? 1 : $1.progress) } / Double(items.count)
     }
 
     func startDownload(modelContext: ModelContext) {
@@ -192,7 +267,7 @@ final class DownloadViewModel: ObservableObject {
 
     func retry(_ id: UUID) {
         guard let item = queueItems.first(where: { $0.id == id }) else { return }
-        var retry = DownloadQueueItem(id: UUID(), url: item.url, info: item.info, mediaType: item.mediaType, quality: item.quality)
+        var retry = DownloadQueueItem(id: UUID(), url: item.url, info: item.info, mediaType: item.mediaType, quality: item.quality, batchID: item.batchID)
         retry.state = .queued
         queueItems.append(retry)
         startWorkersIfNeeded()

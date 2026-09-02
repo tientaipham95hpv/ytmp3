@@ -19,6 +19,7 @@ Production deployments should put the API behind HTTPS, set `CORS_ORIGINS`, pers
 - `MAX_DURATION_SECONDS` (default `14400`; `0` disables)
 - `MAX_FILE_BYTES` (default `8589934592`; `0` disables)
 - `TEMP_RETENTION_SECONDS` (default `86400`)
+- `MAX_PLAYLIST_ITEMS` (default `200`, hard maximum `500`)
 - `MIN_FREE_BYTES` (default `536870912`)
 
 `GET /health` exposes queue and disk health. Authenticated `GET /api/jobs` lists current jobs and queue counts. Finished jobs and files are removed automatically after the configured retention period.

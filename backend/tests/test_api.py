@@ -57,6 +57,32 @@ def test_info_maps_metadata(monkeypatch):
     assert response.json()["estimated_sizes"]["video:720"] == 6_000_000
 
 
+def test_playlist_info_returns_flat_entries(monkeypatch):
+    payload = {"id": "PL123", "title": "My Playlist", "channel": "Creator", "entries": [
+        {"id": "one", "title": "One", "url": "https://www.youtube.com/watch?v=one", "duration": 10},
+        {"id": "two", "title": "Two", "url": "two", "duration": 20},
+    ]}
+    monkeypatch.setattr(main, "require_binary", lambda _: None)
+    monkeypatch.setattr(main, "run_command", lambda _: type("Result", (), {
+        "returncode": 0, "stdout": json.dumps(payload), "stderr": "",
+    })())
+    response = client.post("/api/media/playlist", json={"url": "https://youtube.com/playlist?list=PL123"})
+    assert response.status_code == 200
+    result = response.json()
+    assert result["title"] == "My Playlist"
+    assert result["total_entries"] == 2
+    assert result["entries"][1]["webpage_url"] == "https://www.youtube.com/watch?v=two"
+
+
+def test_playlist_info_rejects_empty_playlist(monkeypatch):
+    monkeypatch.setattr(main, "require_binary", lambda _: None)
+    monkeypatch.setattr(main, "run_command", lambda _: type("Result", (), {
+        "returncode": 0, "stdout": json.dumps({"id": "empty", "entries": []}), "stderr": "",
+    })())
+    response = client.post("/api/media/playlist", json={"url": "https://youtube.com/playlist?list=empty"})
+    assert response.status_code == 422
+
+
 def test_audio_quality_validation():
     response = client.post("/api/media/download", json={"url": "https://youtu.be/abc", "media_type": "audio", "quality": "720"})
     assert response.status_code == 422

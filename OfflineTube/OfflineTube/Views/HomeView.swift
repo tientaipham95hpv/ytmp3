@@ -9,6 +9,7 @@ struct HomeView: View {
     @EnvironmentObject private var network: NetworkMonitor
     @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
     @FocusState private var isURLFocused: Bool
+    @State private var showBatchDownload = false
 
     private var recentlyPlayed: [MediaItem] {
         items.filter { $0.lastPlayedAt != nil }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
@@ -41,11 +42,16 @@ struct HomeView: View {
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Home")
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { showBatchDownload = true; Haptics.selection() } label: { Image(systemName: "square.stack.3d.up") }
+                    .accessibilityLabel("Batch Download")
+            }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Done") { isURLFocused = false }
             }
         }
+        .sheet(isPresented: $showBatchDownload) { BatchDownloadView() }
     }
 
     private var greeting: some View {
@@ -78,6 +84,10 @@ struct HomeView: View {
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
             .disabled(!network.isConnected || downloads.isLoadingInfo || downloads.urlText.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button { showBatchDownload = true; Haptics.selection() } label: {
+                Label("Multiple URLs or Playlist", systemImage: "square.stack.3d.up")
+                    .frame(maxWidth: .infinity)
+            }.buttonStyle(.bordered)
         }
         .padding(AppMetrics.card)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))

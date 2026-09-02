@@ -18,6 +18,27 @@ struct DownloadsView: View {
                         .font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            if let batchID = downloads.activeBatchID {
+                let batchItems = downloads.batchItems(batchID)
+                if !batchItems.isEmpty {
+                    Section("Current Batch") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("\(batchItems.filter { $0.state == .completed }.count) of \(batchItems.count) completed")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("\(Int(downloads.batchProgress(batchID) * 100))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                            }
+                            ProgressView(value: downloads.batchProgress(batchID)).animation(.smooth, value: downloads.batchProgress(batchID))
+                            if batchItems.contains(where: { [.queued, .downloading, .saving].contains($0.state) }) {
+                                Button(role: .destructive) { downloads.cancelBatch(batchID); Haptics.warning() } label: {
+                                    Label("Cancel Entire Batch", systemImage: "xmark.circle")
+                                }
+                            }
+                        }.padding(.vertical, 4)
+                    }
+                }
+            }
             if !active.isEmpty {
                 Section("Queue") { ForEach(active) { downloadRow($0) } }
             }

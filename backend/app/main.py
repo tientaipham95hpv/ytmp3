@@ -44,6 +44,7 @@ MAX_DOWNLOAD_SECONDS = max(60, int(os.getenv("MAX_DOWNLOAD_SECONDS", "7200")))
 MAX_DURATION_SECONDS = max(0, int(os.getenv("MAX_DURATION_SECONDS", "14400")))
 MAX_FILE_BYTES = max(0, int(os.getenv("MAX_FILE_BYTES", str(8 * 1024 * 1024 * 1024))))
 TEMP_RETENTION_SECONDS = max(60, int(os.getenv("TEMP_RETENTION_SECONDS", "86400")))
+MAX_PLAYLIST_ITEMS = max(1, min(500, int(os.getenv("MAX_PLAYLIST_ITEMS", "200"))))
 logger = logging.getLogger("offlinetube.downloads")
 download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 cleanup_task: asyncio.Task | None = None
@@ -294,6 +295,55 @@ async def media_info(request: URLRequest) -> dict:
         "duration": duration,
         "webpage_url": data.get("webpage_url") or request.url,
         "estimated_sizes": estimated_sizes(data),
+    }
+
+
+@app.post("/api/media/playlist")
+async def playlist_info(request: URLRequest) -> dict:
+    """Return flat metadata; every download still uses the normal bounded job queue."""
+    try:
+        require_binary("yt-dlp")
+        result = await asyncio.to_thread(
+            run_command,
+            [
+                "yt-dlp", *yt_dlp_common_args(), "--flat-playlist", "--dump-single-json",
+                "--playlist-end", str(MAX_PLAYLIST_ITEMS), "--skip-download", request.url,
+            ],
+        )
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if result.returncode != 0:
+        status, detail = _friendly_error(result.stderr)
+        raise HTTPException(status_code=status, detail=detail)
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail="yt-dlp returned invalid playlist metadata") from exc
+    raw_entries = data.get("entries") or []
+    entries = []
+    for item in raw_entries[:MAX_PLAYLIST_ITEMS]:
+        if not item or not item.get("id"):
+            continue
+        duration = int(item.get("duration") or 0)
+        if MAX_DURATION_SECONDS and duration > MAX_DURATION_SECONDS:
+            continue
+        thumbnails = item.get("thumbnails") or []
+        thumbnail = item.get("thumbnail") or (thumbnails[-1].get("url") if thumbnails else None)
+        video_url = item.get("webpage_url") or item.get("url")
+        if not isinstance(video_url, str) or not video_url.startswith(("http://", "https://")):
+            video_url = f"https://www.youtube.com/watch?v={item['id']}"
+        entries.append({
+            "id": str(item["id"]), "title": item.get("title") or "Untitled", "thumbnail": thumbnail,
+            "channel": item.get("channel") or item.get("uploader") or "Unknown channel",
+            "duration": duration, "webpage_url": video_url, "estimated_sizes": {},
+        })
+    if not entries:
+        raise HTTPException(status_code=422, detail="The playlist has no downloadable videos.")
+    return {
+        "id": str(data.get("id") or "playlist"), "title": data.get("title") or "YouTube Playlist",
+        "channel": data.get("channel") or data.get("uploader") or "Unknown channel",
+        "thumbnail": data.get("thumbnail"), "entries": entries, "total_entries": len(entries),
+        "is_truncated": len(raw_entries) > MAX_PLAYLIST_ITEMS,
     }
 
 

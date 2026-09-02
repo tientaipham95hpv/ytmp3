@@ -21,6 +21,7 @@ services:
       MAX_DURATION_SECONDS: "14400"
       MAX_FILE_BYTES: "8589934592"
       TEMP_RETENTION_SECONDS: "86400"
+      MAX_PLAYLIST_ITEMS: "200"
       PYTHONUNBUFFERED: "1"
     depends_on:
       - pot-provider

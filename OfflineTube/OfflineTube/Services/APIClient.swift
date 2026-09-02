@@ -17,6 +17,22 @@ struct MediaInfo: Codable, Sendable {
     }
 }
 
+struct PlaylistInfo: Codable, Sendable {
+    let id: String
+    let title: String
+    let channel: String
+    let thumbnail: String?
+    let entries: [MediaInfo]
+    let totalEntries: Int
+    let isTruncated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, channel, thumbnail, entries
+        case totalEntries = "total_entries"
+        case isTruncated = "is_truncated"
+    }
+}
+
 struct JobCreated: Codable, Sendable {
     let id: String
     let status: String
@@ -180,6 +196,10 @@ actor APIClient {
 
     func mediaInfo(url: String) async throws -> MediaInfo {
         try await request("api/media/info", body: ["url": url])
+    }
+
+    func playlistInfo(url: String) async throws -> PlaylistInfo {
+        try await request("api/media/playlist", body: ["url": url])
     }
 
     func createDownload(url: String, mediaType: String, quality: String) async throws -> JobCreated {
