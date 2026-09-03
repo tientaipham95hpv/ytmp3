@@ -59,6 +59,8 @@ struct LibraryView: View {
         .searchable(text: $searchText, prompt: "Songs, videos, artists")
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                NavigationLink { StatisticsView() } label: { Image(systemName: "chart.bar.xaxis") }
+                    .accessibilityLabel("Statistics")
                 Menu {
                     Picker("Sort", selection: $sort) { ForEach(Sort.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                 } label: { Image(systemName: "arrow.up.arrow.down") }

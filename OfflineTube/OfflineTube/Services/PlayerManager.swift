@@ -43,6 +43,8 @@ final class PlayerManager: ObservableObject {
     private var modelContext: ModelContext?
     private var lastSavedSecond = -1
     private var lastNowPlayingSecond = -1
+    private var analyticsLastTime: Double?
+    private var analyticsPendingSeconds: Double = 0
     private let stateKey = "player.session.v1"
 
     private struct PersistedSession: Codable {
@@ -72,7 +74,7 @@ final class PlayerManager: ObservableObject {
         crossfadeTask?.cancel()
     }
 
-    func play(_ item: MediaItem, queue newQueue: [MediaItem]? = nil) {
+    func play(_ item: MediaItem, queue newQueue: [MediaItem]? = nil, recordReplacementAsSkip: Bool = true) {
         guard FileManager.default.fileExists(atPath: item.localURL.path) else { return }
         if currentItem?.id != item.id { cancelCrossfade() }
         if let newQueue {
@@ -83,6 +85,8 @@ final class PlayerManager: ObservableObject {
         if !queue.contains(where: { $0.id == item.id }) { queue.append(item) }
         if !originalQueue.contains(where: { $0.id == item.id }) { originalQueue.append(item) }
         if currentItem?.id != item.id {
+            if recordReplacementAsSkip { recordSkipIfNeeded() }
+            flushAnalyticsTime()
             currentItem = item
             item.lastPlayedAt = Date()
             item.playCount += 1
@@ -95,6 +99,8 @@ final class PlayerManager: ObservableObject {
             duration = item.duration
             seek(to: item.playbackPosition)
             observeEnd(of: playerItem)
+            analyticsLastTime = item.playbackPosition
+            recordAnalyticsStart(item)
         }
         player.playImmediately(atRate: playbackSpeed)
         isPlaying = true
@@ -117,6 +123,7 @@ final class PlayerManager: ObservableObject {
         cancelCrossfade()
         player.pause()
         isPlaying = false
+        flushAnalyticsTime()
         persistPosition()
         saveContext()
         updateNowPlaying()
@@ -141,13 +148,16 @@ final class PlayerManager: ObservableObject {
 
     func skip(by seconds: Double) { seek(to: currentTime + seconds) }
 
-    func next() {
+    func next() { advanceToNext(manual: true) }
+
+    private func advanceToNext(manual: Bool) {
         if isCrossfading, let transitionItem, let transitionPlayer {
             finishCrossfade(to: transitionItem, oldPlayer: activePlayer, incoming: transitionPlayer)
             return
         }
         guard let currentItem, !queue.isEmpty,
               let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return }
+        if manual { recordSkipIfNeeded() }
         let nextIndex: Int
         if index + 1 < queue.count {
             nextIndex = index + 1
@@ -160,16 +170,17 @@ final class PlayerManager: ObservableObject {
         }
         let target = queue[nextIndex]
         if shouldCrossfade(to: target) { beginCrossfade(to: target) }
-        else { play(target) }
+        else { play(target, recordReplacementAsSkip: false) }
     }
 
     func previous() {
         cancelCrossfade()
         if currentTime > 5 { seek(to: 0); return }
+        recordSkipIfNeeded()
         guard let currentItem, !queue.isEmpty,
               let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return }
-        if index > 0 { play(queue[index - 1]) }
-        else if repeatMode == .all { play(queue[queue.count - 1]) }
+        if index > 0 { play(queue[index - 1], recordReplacementAsSkip: false) }
+        else if repeatMode == .all { play(queue[queue.count - 1], recordReplacementAsSkip: false) }
         else { seek(to: 0) }
     }
 
@@ -278,6 +289,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func savePlaybackState() {
+        flushAnalyticsTime()
         persistPosition()
         saveContext()
         persistSession()
@@ -309,6 +321,7 @@ final class PlayerManager: ObservableObject {
                     self.duration = seconds
                 }
                 self.persistPosition()
+                self.trackAnalyticsTime(at: self.currentTime)
                 let second = Int(self.currentTime)
                 if second != self.lastNowPlayingSecond {
                     self.lastNowPlayingSecond = second
@@ -325,11 +338,12 @@ final class PlayerManager: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 guard !self.isCrossfading else { return }
+                if let current = self.currentItem { self.recordAnalyticsCompletion(current) }
                 if self.repeatMode == .one {
                     self.seek(to: 0)
                     self.resume()
                 } else {
-                    self.next()
+                    self.advanceToNext(manual: false)
                 }
             }
         }
@@ -362,6 +376,7 @@ final class PlayerManager: ObservableObject {
     private func startAutomaticTransitionIfNeeded() {
         guard let target = nextQueueItem(), shouldCrossfade(to: target), duration > 0,
               duration - currentTime <= crossfadeSeconds else { return }
+        if let currentItem { recordAnalyticsCompletion(currentItem) }
         beginCrossfade(to: target)
     }
 
@@ -393,6 +408,7 @@ final class PlayerManager: ObservableObject {
 
     private func finishCrossfade(to item: MediaItem, oldPlayer: AVPlayer, incoming: AVPlayer) {
         crossfadeTask?.cancel()
+        flushAnalyticsTime()
         persistPosition()
         oldPlayer.pause(); oldPlayer.volume = 1
         activePlayer = incoming; activePlayer.volume = 1
@@ -402,6 +418,8 @@ final class PlayerManager: ObservableObject {
         duration = item.duration
         currentTime = max(0, incoming.currentTime().seconds.isFinite ? incoming.currentTime().seconds : 0)
         lastSavedSecond = Int(currentTime)
+        analyticsLastTime = currentTime
+        recordAnalyticsStart(item)
         observeTime()
         if let playerItem = incoming.currentItem { observeEnd(of: playerItem) }
         observeExternalPlayback()
@@ -434,6 +452,45 @@ final class PlayerManager: ObservableObject {
     }
 
     private func saveContext() { try? modelContext?.save() }
+
+    private func analyticsID(for item: MediaItem) -> String {
+        item.sourceID.isEmpty ? item.id.uuidString : item.sourceID
+    }
+
+    private func recordAnalyticsStart(_ item: MediaItem) {
+        let id = analyticsID(for: item), title = item.title, channel = item.channel, isVideo = item.isVideo
+        Task { await LocalStatisticsStore.shared.recordStarted(id: id, title: title, channel: channel, isVideo: isVideo) }
+    }
+
+    private func recordAnalyticsCompletion(_ item: MediaItem) {
+        flushAnalyticsTime()
+        let id = analyticsID(for: item), title = item.title, channel = item.channel, isVideo = item.isVideo
+        Task { await LocalStatisticsStore.shared.recordCompleted(id: id, title: title, channel: channel, isVideo: isVideo) }
+    }
+
+    private func recordSkipIfNeeded() {
+        guard let item = currentItem, currentTime >= 3, duration <= 0 || currentTime < duration - 3 else { return }
+        flushAnalyticsTime()
+        let id = analyticsID(for: item), title = item.title, channel = item.channel, isVideo = item.isVideo
+        Task { await LocalStatisticsStore.shared.recordSkipped(id: id, title: title, channel: channel, isVideo: isVideo) }
+    }
+
+    private func trackAnalyticsTime(at time: Double) {
+        defer { analyticsLastTime = time }
+        guard isPlaying, let previous = analyticsLastTime else { return }
+        let delta = time - previous
+        guard delta > 0, delta < 2 else { return }
+        analyticsPendingSeconds += delta
+        if analyticsPendingSeconds >= 5 { flushAnalyticsTime() }
+    }
+
+    private func flushAnalyticsTime() {
+        guard let item = currentItem, analyticsPendingSeconds > 0 else { return }
+        let seconds = analyticsPendingSeconds
+        analyticsPendingSeconds = 0
+        let id = analyticsID(for: item), title = item.title, channel = item.channel, isVideo = item.isVideo
+        Task { await LocalStatisticsStore.shared.recordActiveTime(id: id, title: title, channel: channel, isVideo: isVideo, seconds: seconds) }
+    }
 
     private func persistSession() {
         let session = PersistedSession(

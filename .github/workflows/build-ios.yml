@@ -49,6 +49,14 @@ jobs:
             -o "$RUNNER_TEMP/scheduler-tests"
           "$RUNNER_TEMP/scheduler-tests"
 
+      - name: Test local statistics aggregation and persistence
+        run: |
+          swiftc \
+            OfflineTube/OfflineTube/Services/LocalStatisticsStore.swift \
+            OfflineTube/StatisticsTests/main.swift \
+            -o "$RUNNER_TEMP/statistics-tests"
+          "$RUNNER_TEMP/statistics-tests"
+
       - name: Test local search with 50k fake records
         run: |
           set -euo pipefail
