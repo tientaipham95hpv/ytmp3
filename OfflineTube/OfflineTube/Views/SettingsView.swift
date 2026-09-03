@@ -34,6 +34,9 @@ struct SettingsView: View {
                 NavigationLink { StorageManagementView() } label: {
                     Label("Manage Storage", systemImage: "internaldrive")
                 }
+                NavigationLink { BackupRestoreView() } label: {
+                    Label("Backup & Restore", systemImage: "externaldrive.badge.timemachine")
+                }
             }
             Section("Appearance") {
                 Picker("Language", selection: $language) { ForEach(AppLanguage.allCases) { Text($0.title).tag($0.rawValue) } }

@@ -50,6 +50,12 @@ jobs:
           fi
           "$RUNNER_TEMP/search-benchmark"
 
+      - name: Test backup export-delete-restore flow
+        run: |
+          set -euo pipefail
+          xcrun swiftc -O OfflineTube/BackupSmokeTest/main.swift -o "$RUNNER_TEMP/backup-smoke-test"
+          "$RUNNER_TEMP/backup-smoke-test"
+
       - name: Build Release for iphoneos
         run: |
           set -euo pipefail
