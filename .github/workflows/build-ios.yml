@@ -36,10 +36,18 @@ jobs:
       - name: Test local search with 50k fake records
         run: |
           set -euo pipefail
-          xcrun swiftc \
+          COMPILE_LOG="$RUNNER_TEMP/search-compile.log"
+          set +e
+          xcrun swiftc -O \
             OfflineTube/OfflineTube/Services/LocalSearchEngine.swift \
             OfflineTube/SearchBenchmark/main.swift \
-            -o "$RUNNER_TEMP/search-benchmark"
+            -o "$RUNNER_TEMP/search-benchmark" 2>&1 | tee "$COMPILE_LOG"
+          RESULT=${PIPESTATUS[0]}
+          set -e
+          if [ "$RESULT" -ne 0 ]; then
+            while IFS= read -r line; do echo "::error::$line"; done < "$COMPILE_LOG"
+            exit "$RESULT"
+          fi
           "$RUNNER_TEMP/search-benchmark"
 
       - name: Build Release for iphoneos

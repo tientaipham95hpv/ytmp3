@@ -29,7 +29,7 @@ let response = LocalSearchEngine.searchSynchronously(documents: documents, reque
 let elapsed = Date().timeIntervalSince(started)
 
 precondition(response.hits.count == 50, "Expected 50 exact fake-dataset matches")
-precondition(elapsed < 8, "Search exceeded the 8-second safety budget")
+precondition(elapsed < 8, "Optimized search exceeded the 8-second safety budget")
 
 let filtered = LocalSearchEngine.searchSynchronously(
     documents: documents,
