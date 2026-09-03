@@ -53,7 +53,15 @@ jobs:
       - name: Test backup export-delete-restore flow
         run: |
           set -euo pipefail
-          xcrun swiftc -O OfflineTube/BackupSmokeTest/main.swift -o "$RUNNER_TEMP/backup-smoke-test"
+          COMPILE_LOG="$RUNNER_TEMP/backup-compile.log"
+          set +e
+          xcrun swiftc -O OfflineTube/BackupSmokeTest/main.swift -o "$RUNNER_TEMP/backup-smoke-test" 2>&1 | tee "$COMPILE_LOG"
+          RESULT=${PIPESTATUS[0]}
+          set -e
+          if [ "$RESULT" -ne 0 ]; then
+            while IFS= read -r line; do echo "::error::$line"; done < "$COMPILE_LOG"
+            exit "$RESULT"
+          fi
           "$RUNNER_TEMP/backup-smoke-test"
 
       - name: Build Release for iphoneos

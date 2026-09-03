@@ -28,5 +28,6 @@ precondition(URL(fileURLWithPath: decoded.mediaFile).lastPathComponent == decode
 try manager.createDirectory(at: restored, withIntermediateDirectories: true)
 try manager.copyItem(at: package.appendingPathComponent("Media").appendingPathComponent(decoded.mediaFile),
                      to: restored.appendingPathComponent(decoded.mediaFile))
-precondition(try Data(contentsOf: restored.appendingPathComponent(decoded.mediaFile)) == payload)
+let restoredPayload = try Data(contentsOf: restored.appendingPathComponent(decoded.mediaFile))
+precondition(restoredPayload == payload)
 print("Backup smoke test: export -> delete -> validate -> restore passed")
