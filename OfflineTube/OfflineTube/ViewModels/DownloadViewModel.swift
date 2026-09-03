@@ -34,10 +34,11 @@ struct DownloadQueueItem: Identifiable, Codable {
     var retryCount: Int = 0
     var remainingSeconds: Double?
     var batchID: UUID?
+    var replacementIDs: [UUID]
 
     enum CodingKeys: String, CodingKey {
         case id, url, info, mediaType, quality, state, progress, downloadedBytes
-        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount, remainingSeconds, batchID
+        case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount, remainingSeconds, batchID, replacementIDs
     }
 
     init(
@@ -54,7 +55,8 @@ struct DownloadQueueItem: Identifiable, Codable {
         backendJobID: String? = nil,
         error: String? = nil,
         retryCount: Int = 0,
-        batchID: UUID? = nil
+        batchID: UUID? = nil,
+        replacementIDs: [UUID] = []
     ) {
         self.id = id
         self.url = url
@@ -71,6 +73,7 @@ struct DownloadQueueItem: Identifiable, Codable {
         self.retryCount = retryCount
         self.remainingSeconds = nil
         self.batchID = batchID
+        self.replacementIDs = replacementIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -90,6 +93,7 @@ struct DownloadQueueItem: Identifiable, Codable {
         retryCount = try values.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
         remainingSeconds = try values.decodeIfPresent(Double.self, forKey: .remainingSeconds)
         batchID = try values.decodeIfPresent(UUID.self, forKey: .batchID)
+        replacementIDs = try values.decodeIfPresent([UUID].self, forKey: .replacementIDs) ?? []
     }
 }
 
@@ -121,6 +125,8 @@ final class DownloadViewModel: ObservableObject {
     @Published var batchSelection = Set<String>()
     @Published var isLoadingBatch = false
     @Published var activeBatchID: UUID?
+    @Published var duplicateMatches: [MediaItem] = []
+    @Published var showDuplicateWarning = false
     @Published private(set) var queueItems: [DownloadQueueItem] = [] {
         didSet { persistQueue() }
     }
@@ -225,18 +231,16 @@ final class DownloadViewModel: ObservableObject {
         return items.reduce(0) { $0 + ($1.state == .completed ? 1 : $1.progress) } / Double(items.count)
     }
 
-    func startDownload(modelContext: ModelContext) {
+    private func enqueueDownload(modelContext: ModelContext, replacementIDs: [UUID] = []) {
         guard let info = mediaInfo else { return }
         self.modelContext = modelContext
         do {
             try FileStore.cleanupTemporaryFiles()
             try FileStore.ensureCapacity()
             let sourceID = info.id
-            let existing = try modelContext.fetch(FetchDescriptor<MediaItem>(predicate: #Predicate { $0.sourceID == sourceID }))
-            let exactExists = existing.contains { $0.mediaType == self.mediaKind.rawValue && $0.quality == self.quality }
             let exactQueued = queueItems.contains { $0.info.id == sourceID && $0.mediaType == self.mediaKind.rawValue && $0.quality == self.quality && $0.state != .failed && $0.state != .cancelled }
-            guard !exactExists, !exactQueued else {
-                errorMessage = localized("This media is already in your Library or download queue.", "Nội dung này đã có trong Thư viện hoặc hàng đợi tải.")
+            guard !exactQueued else {
+                errorMessage = localized("This media is already in the download queue.", "Nội dung này đã có trong hàng đợi tải.")
                 return
             }
         } catch {
@@ -244,14 +248,41 @@ final class DownloadViewModel: ObservableObject {
             logger.error("enqueue rejected source=\(info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             return
         }
-        queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality))
+        queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality, replacementIDs: replacementIDs))
         logger.info("queued source=\(info.id, privacy: .public) type=\(self.mediaKind.rawValue, privacy: .public)")
         completedMessage = localized("Added “\(info.title)” to the queue.", "Đã thêm “\(info.title)” vào hàng đợi.")
         errorMessage = nil
         startWorkersIfNeeded()
     }
 
-    func download(modelContext: ModelContext) async { startDownload(modelContext: modelContext) }
+    func download(modelContext: ModelContext) async {
+        guard let info = mediaInfo else { return }
+        do {
+            let items = try modelContext.fetch(FetchDescriptor<MediaItem>())
+            let candidate = DuplicateDescriptor(id: UUID(), sourceID: info.id, sourceURL: info.webpageURL,
+                title: info.title, channel: info.channel, duration: info.duration, mediaType: mediaKind.rawValue,
+                fileSize: estimatedSize(for: info) ?? 0, fileHash: nil)
+            let ids = Set(DuplicateDetector.matches(candidate, in: items.map { $0.duplicateDescriptor() }).map(\.id))
+            duplicateMatches = items.filter { ids.contains($0.id) }
+            if !duplicateMatches.isEmpty { showDuplicateWarning = true; return }
+            enqueueDownload(modelContext: modelContext)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func startDownload(modelContext: ModelContext) {
+        Task { await download(modelContext: modelContext) }
+    }
+
+    func downloadAnyway(modelContext: ModelContext) {
+        showDuplicateWarning = false
+        enqueueDownload(modelContext: modelContext)
+    }
+
+    func replaceExisting(modelContext: ModelContext) {
+        let ids = duplicateMatches.map(\.id)
+        showDuplicateWarning = false
+        enqueueDownload(modelContext: modelContext, replacementIDs: ids)
+    }
 
     func cancel(_ id: UUID) {
         guard let index = queueItems.firstIndex(where: { $0.id == id }) else { return }
@@ -276,7 +307,7 @@ final class DownloadViewModel: ObservableObject {
     func retry(modelContext: ModelContext) {
         self.modelContext = modelContext
         if let failed = queueItems.last(where: { $0.state == .failed || $0.state == .cancelled }) { retry(failed.id) }
-        else { startDownload(modelContext: modelContext) }
+        else { enqueueDownload(modelContext: modelContext) }
     }
 
     func removeFinished(at offsets: IndexSet) {
@@ -344,7 +375,27 @@ final class DownloadViewModel: ObservableObject {
                     }
                     let item = MediaItem(sourceID: snapshot.info.id, sourceURL: snapshot.info.webpageURL, title: snapshot.info.title, channel: snapshot.info.channel, thumbnailURL: snapshot.info.thumbnail, duration: snapshot.info.duration, localFilename: localURL.lastPathComponent, mediaType: snapshot.mediaType, quality: snapshot.quality)
                     item.artworkFilename = await FileStore.saveArtwork(from: snapshot.info.thumbnail, sourceID: snapshot.info.id)
-                    modelContext.insert(item); try modelContext.save()
+                    if !snapshot.replacementIDs.isEmpty {
+                        let allItems = try modelContext.fetch(FetchDescriptor<MediaItem>())
+                        let replacing = allItems.filter { snapshot.replacementIDs.contains($0.id) }
+                        if let original = replacing.first {
+                            item.isFavorite = original.isFavorite; item.playbackPosition = original.playbackPosition
+                            item.playCount = original.playCount; item.lastPlayedAt = original.lastPlayedAt
+                            item.notes = original.notes; item.lyricsText = original.lyricsText; item.lyricsFormat = original.lyricsFormat
+                        }
+                        modelContext.insert(item)
+                        let playlists = try modelContext.fetch(FetchDescriptor<MediaPlaylist>())
+                        let oldIDs = Set(snapshot.replacementIDs)
+                        for playlist in playlists where playlist.itemIDs.contains(where: oldIDs.contains) {
+                            playlist.itemIDs = Self.replacing(oldIDs, with: item.id, in: playlist.itemIDs)
+                            playlist.updatedAt = Date()
+                        }
+                        for old in replacing {
+                            PlayerManager.shared.stopIfPlaying(old)
+                            if (try? FileStore.remove(old)) != nil { modelContext.delete(old) }
+                        }
+                    } else { modelContext.insert(item) }
+                    try modelContext.save()
                     guard let finishedIndex = queueItems.firstIndex(where: { $0.id == id }) else { return }
                     queueItems[finishedIndex].state = .completed; queueItems[finishedIndex].progress = 1
                     queueItems[finishedIndex].downloadedBytes = FileStore.fileSize(for: item)
@@ -384,6 +435,15 @@ final class DownloadViewModel: ObservableObject {
 
     private func localized(_ english: String, _ vietnamese: String) -> String {
         UserDefaults.standard.string(forKey: "appLanguage") == AppLanguage.vietnamese.rawValue ? vietnamese : english
+    }
+
+    private static func replacing(_ oldIDs: Set<UUID>, with newID: UUID, in values: [UUID]) -> [UUID] {
+        var output: [UUID] = []
+        for value in values {
+            let candidate = oldIDs.contains(value) ? newID : value
+            if !output.contains(candidate) { output.append(candidate) }
+        }
+        return output
     }
 
     private func isTransient(_ error: Error) -> Bool {

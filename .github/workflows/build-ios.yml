@@ -33,6 +33,14 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Test duplicate detection
+        run: |
+          swiftc -D DUPLICATE_CORE_TEST \
+            OfflineTube/OfflineTube/Services/DuplicateDetection.swift \
+            OfflineTube/DuplicateDetectionTests/main.swift \
+            -o "$RUNNER_TEMP/duplicate-tests"
+          "$RUNNER_TEMP/duplicate-tests"
+
       - name: Test local search with 50k fake records
         run: |
           set -euo pipefail

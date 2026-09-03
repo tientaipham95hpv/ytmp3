@@ -3,6 +3,7 @@ import SwiftData
 
 struct DownloadView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var player: PlayerManager
     @StateObject private var viewModel = DownloadViewModel()
     @FocusState private var isURLFieldFocused: Bool
 
@@ -47,6 +48,22 @@ struct DownloadView: View {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
                 Button("Xong") { isURLFieldFocused = false }
+            }
+        }
+        .confirmationDialog(
+            "Possible duplicate found",
+            isPresented: $viewModel.showDuplicateWarning,
+            titleVisibility: .visible
+        ) {
+            if let existing = viewModel.duplicateMatches.first {
+                Button("Play Existing") { player.play(existing) }
+            }
+            Button("Download Anyway") { viewModel.downloadAnyway(modelContext: modelContext) }
+            Button("Replace Existing", role: .destructive) { viewModel.replaceExisting(modelContext: modelContext) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let existing = viewModel.duplicateMatches.first {
+                Text("“\(existing.title)” already exists (\(existing.quality), \(existing.fileSize.formattedBytes)). Replace deletes the selected existing copy only after the new download is saved.")
             }
         }
     }

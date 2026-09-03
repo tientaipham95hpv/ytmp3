@@ -17,6 +17,7 @@ struct LibraryView: View {
     @State private var playlistTarget: MediaItem?
     @State private var metadataTarget: MediaItem?
     @State private var showBatchMetadataEditor = false
+    @State private var showDuplicates = false
 
     private var filteredItems: [MediaItem] {
         var result = items.filter { item in
@@ -63,12 +64,15 @@ struct LibraryView: View {
                 } label: { Image(systemName: "arrow.up.arrow.down") }
                 Button { showBatchMetadataEditor = true } label: { Image(systemName: "pencil.and.list.clipboard") }
                     .accessibilityLabel("Batch Edit Metadata")
+                Button { showDuplicates = true } label: { Image(systemName: "rectangle.stack.badge.minus") }
+                    .accessibilityLabel("Find Duplicates")
                 Button { withAnimation(.snappy) { gridMode.toggle() } } label: { Image(systemName: gridMode ? "list.bullet" : "square.grid.2x2") }
             }
         }
         .sheet(item: $playlistTarget) { item in AddToPlaylistSheet(item: item, playlists: playlists) }
         .sheet(item: $metadataTarget) { item in MetadataEditorView(item: item) }
         .sheet(isPresented: $showBatchMetadataEditor) { BatchMetadataEditorView(items: items.filter(\.isAvailableOffline)) }
+        .sheet(isPresented: $showDuplicates) { DuplicatesView() }
         .alert("Couldn’t update Library", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "Unknown error") }
