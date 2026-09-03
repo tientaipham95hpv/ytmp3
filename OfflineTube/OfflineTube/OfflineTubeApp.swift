@@ -10,6 +10,6 @@ struct OfflineTubeApp: App {
             RootView()
                 .environmentObject(player)
         }
-        .modelContainer(for: [MediaItem.self, MediaPlaylist.self, CustomSmartPlaylist.self])
+        .modelContainer(AppModelStore.shared)
     }
 }
