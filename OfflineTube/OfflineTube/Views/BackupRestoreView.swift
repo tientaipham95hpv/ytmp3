@@ -18,20 +18,24 @@ struct BackupRestoreView: View {
 
     var body: some View {
         List {
-            Section("Export Backup") {
+            Section {
                 Button { export(.metadataOnly) } label: {
                     Label("Metadata Only", systemImage: "doc.text")
                 }
                 Button { export(.full) } label: {
                     Label("Full Backup with Media", systemImage: "archivebox.fill")
                 }
+            } header: {
+                Text("Export Backup")
             } footer: {
                 Text("Full backup can be large. Both modes include Library metadata, playlists, favorites, playback positions and app settings.")
             }
-            Section("Restore Backup") {
+            Section {
                 Button { showImporter = true } label: {
                     Label("Choose Backup File", systemImage: "square.and.arrow.down")
                 }
+            } header: {
+                Text("Restore Backup")
             } footer: {
                 Text("OfflineTube validates and stages the package before showing Merge or Replace options.")
             }
