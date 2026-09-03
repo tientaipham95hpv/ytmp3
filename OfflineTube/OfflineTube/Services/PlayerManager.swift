@@ -268,6 +268,12 @@ final class PlayerManager: ObservableObject {
         persistSession()
     }
 
+    func metadataDidChange(for item: MediaItem) {
+        guard currentItem?.id == item.id else { return }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        updateNowPlaying()
+    }
+
     private func configureAudioSession() {
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])

@@ -10,6 +10,7 @@ final class MediaItem {
     var channel: String
     var thumbnailURL: String?
     var artworkFilename: String? = nil
+    var customArtworkFilename: String? = nil
     var duration: Double
     var localFilename: String
     var mediaType: String
@@ -23,6 +24,7 @@ final class MediaItem {
     var lyricsText: String? = nil
     var lyricsFormat: String? = nil
     var lyricsUpdatedAt: Date? = nil
+    var notes: String? = nil
 
     init(sourceID: String, sourceURL: String, title: String, channel: String, thumbnailURL: String?, duration: Double, localFilename: String, mediaType: String, quality: String) {
         self.id = UUID()
@@ -32,6 +34,7 @@ final class MediaItem {
         self.channel = channel
         self.thumbnailURL = thumbnailURL
         self.artworkFilename = nil
+        self.customArtworkFilename = nil
         self.duration = duration
         self.localFilename = localFilename
         self.mediaType = mediaType
@@ -46,6 +49,7 @@ final class MediaItem {
         self.lyricsText = nil
         self.lyricsFormat = nil
         self.lyricsUpdatedAt = nil
+        self.notes = nil
     }
 
     var localURL: URL {
@@ -53,6 +57,11 @@ final class MediaItem {
     }
 
     var artworkURL: URL? {
+        guard let filename = customArtworkFilename ?? artworkFilename else { return nil }
+        return FileStore.artworkDirectory.appendingPathComponent(filename)
+    }
+
+    var originalArtworkURL: URL? {
         guard let artworkFilename else { return nil }
         return FileStore.artworkDirectory.appendingPathComponent(artworkFilename)
     }

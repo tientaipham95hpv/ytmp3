@@ -165,7 +165,26 @@
     "Date Added" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ngày thêm" } } } },
     "Reset Filters" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Đặt lại bộ lọc" } } } },
     "Search Filters" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bộ lọc tìm kiếm" } } } },
-    "Playlist" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Playlist" } } } }
+    "Playlist" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Playlist" } } } },
+    "Edit Metadata" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Sửa metadata" } } } },
+    "Batch Edit Metadata" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Sửa metadata hàng loạt" } } } },
+    "Metadata" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Metadata" } } } },
+    "Artist / Channel" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Nghệ sĩ / Kênh" } } } },
+    "Artwork" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ảnh bìa" } } } },
+    "Choose from Photos" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn từ Ảnh" } } } },
+    "Choose from Files" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn từ Tệp" } } } },
+    "Reset to Original Artwork" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Khôi phục ảnh bìa ban đầu" } } } },
+    "Notes" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Ghi chú" } } } },
+    "Changes apply only to your local Library and never modify the online source." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thay đổi chỉ áp dụng cho Thư viện local và không sửa nguồn online." } } } },
+    "Couldn’t update metadata" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không thể cập nhật metadata" } } } },
+    "Deselect All" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Bỏ chọn tất cả" } } } },
+    "Select All" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Chọn tất cả" } } } },
+    "Batch Changes" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thay đổi hàng loạt" } } } },
+    "Replace Artist / Channel" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thay Nghệ sĩ / Kênh" } } } },
+    "Replace Notes" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thay ghi chú" } } } },
+    "Replace Artwork" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Thay ảnh bìa" } } } },
+    "Batch title editing is intentionally unavailable because each media item needs its own title." : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Không sửa tiêu đề hàng loạt vì mỗi nội dung cần tiêu đề riêng." } } } },
+    "Apply" : { "localizations" : { "vi" : { "stringUnit" : { "state" : "translated", "value" : "Áp dụng" } } } }
   },
   "version" : "1.0"
 }

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 enum FileStore {
     struct StorageSnapshot {
@@ -50,9 +51,40 @@ enum FileStore {
         if FileManager.default.fileExists(atPath: item.localURL.path) {
             try FileManager.default.removeItem(at: item.localURL)
         }
-        if let artworkURL = item.artworkURL, FileManager.default.fileExists(atPath: artworkURL.path) {
+        let artworkURLs = [item.originalArtworkURL, item.customArtworkFilename.map { artworkDirectory.appendingPathComponent($0) }]
+        for case let artworkURL? in artworkURLs where FileManager.default.fileExists(atPath: artworkURL.path) {
             try FileManager.default.removeItem(at: artworkURL)
         }
+    }
+
+    static func saveCustomArtwork(data: Data, itemID: UUID) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            guard !data.isEmpty, data.count <= 20 * 1024 * 1024, UIImage(data: data) != nil else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
+            let filename = "custom-\(itemID.uuidString)-\(UUID().uuidString).\(isPNG ? "png" : "jpg")"
+            let destination = artworkDirectory.appendingPathComponent(filename)
+            try data.write(to: destination, options: [.atomic, .completeFileProtectionUnlessOpen])
+            return filename
+        }.value
+    }
+
+    static func loadArtworkData(from url: URL) async throws -> Data {
+        try await Task.detached(priority: .userInitiated) {
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+            guard data.count <= 20 * 1024 * 1024 else { throw CocoaError(.fileReadTooLarge) }
+            return data
+        }.value
+    }
+
+    static func removeCustomArtwork(_ item: MediaItem) throws {
+        guard let filename = item.customArtworkFilename else { return }
+        let url = artworkDirectory.appendingPathComponent(filename)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        item.customArtworkFilename = nil
     }
 
     static func saveArtwork(from remoteValue: String?, sourceID: String) async -> String? {
@@ -90,7 +122,7 @@ enum FileStore {
     static func clearArtworkCache(items: [MediaItem]) throws {
         let urls = try FileManager.default.contentsOfDirectory(at: artworkDirectory, includingPropertiesForKeys: nil)
         for url in urls { try FileManager.default.removeItem(at: url) }
-        items.forEach { $0.artworkFilename = nil }
+        items.forEach { $0.artworkFilename = nil; $0.customArtworkFilename = nil }
     }
 
     static func cleanupTemporaryFiles(olderThan age: TimeInterval = 3600) throws {
@@ -115,7 +147,7 @@ enum FileStore {
         for url in urls where !filenames.contains(url.lastPathComponent) {
             try FileManager.default.removeItem(at: url)
         }
-        let artworkFilenames = Set(items.compactMap(\.artworkFilename))
+        let artworkFilenames = Set(items.flatMap { [$0.artworkFilename, $0.customArtworkFilename].compactMap { $0 } })
         let artworkURLs = try FileManager.default.contentsOfDirectory(at: artworkDirectory, includingPropertiesForKeys: nil)
         for url in artworkURLs where !artworkFilenames.contains(url.lastPathComponent) {
             try FileManager.default.removeItem(at: url)

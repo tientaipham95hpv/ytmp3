@@ -59,6 +59,7 @@ struct SearchView: View {
             loadRecentSearches()
             scheduleSearch(immediate: true)
         }
+        .onAppear { scheduleSearch(immediate: true) }
         .onDisappear { searchTask?.cancel() }
         .onChange(of: searchText) { _, _ in scheduleSearch() }
         .onChange(of: mediaFilter) { _, _ in scheduleSearch(immediate: true) }

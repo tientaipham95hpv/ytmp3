@@ -15,6 +15,8 @@ struct LibraryView: View {
     @State private var gridMode = false
     @State private var errorMessage: String?
     @State private var playlistTarget: MediaItem?
+    @State private var metadataTarget: MediaItem?
+    @State private var showBatchMetadataEditor = false
 
     private var filteredItems: [MediaItem] {
         var result = items.filter { item in
@@ -59,10 +61,14 @@ struct LibraryView: View {
                 Menu {
                     Picker("Sort", selection: $sort) { ForEach(Sort.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                 } label: { Image(systemName: "arrow.up.arrow.down") }
+                Button { showBatchMetadataEditor = true } label: { Image(systemName: "pencil.and.list.clipboard") }
+                    .accessibilityLabel("Batch Edit Metadata")
                 Button { withAnimation(.snappy) { gridMode.toggle() } } label: { Image(systemName: gridMode ? "list.bullet" : "square.grid.2x2") }
             }
         }
         .sheet(item: $playlistTarget) { item in AddToPlaylistSheet(item: item, playlists: playlists) }
+        .sheet(item: $metadataTarget) { item in MetadataEditorView(item: item) }
+        .sheet(isPresented: $showBatchMetadataEditor) { BatchMetadataEditorView(items: items.filter(\.isAvailableOffline)) }
         .alert("Couldn’t update Library", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "Unknown error") }
@@ -147,6 +153,7 @@ struct LibraryView: View {
         Button { item.isFavorite.toggle(); save() } label: {
             Label { Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite")) } icon: { Image(systemName: item.isFavorite ? "heart.slash" : "heart") }
         }
+        Button { metadataTarget = item } label: { Label("Edit Metadata", systemImage: "pencil") }
         Button { playlistTarget = item } label: { Label("Add to Playlist", systemImage: "text.badge.plus") }
         ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
         Divider()
