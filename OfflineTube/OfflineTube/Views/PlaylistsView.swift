@@ -85,9 +85,8 @@ struct PlaylistsView: View {
 }
 
 private struct SmartPlaylistDetail: View {
-    enum Kind { case recentlyAdded, recentlyPlayed, mostPlayed, favorites, neverPlayed, largeFiles, audioOnly, videoOnly }
     @EnvironmentObject private var player: PlayerManager
-    let kind: Kind
+    let kind: BuiltInSmartPlaylist
     let allItems: [MediaItem]
 
     private var title: LocalizedStringKey {
@@ -98,17 +97,7 @@ private struct SmartPlaylistDetail: View {
         }
     }
     private var items: [MediaItem] {
-        let availableItems = allItems.filter(\.isAvailableOffline)
-        return switch kind {
-        case .recentlyAdded: availableItems.sorted { $0.createdAt > $1.createdAt }
-        case .recentlyPlayed: availableItems.filter { $0.lastPlayedAt != nil }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
-        case .mostPlayed: availableItems.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }
-        case .favorites: availableItems.filter(\.isFavorite).sorted { $0.createdAt > $1.createdAt }
-        case .neverPlayed: availableItems.filter { $0.playCount == 0 }.sorted { $0.createdAt > $1.createdAt }
-        case .largeFiles: availableItems.sorted { $0.fileSize > $1.fileSize }.filter { $0.fileSize >= 100 * 1_048_576 }
-        case .audioOnly: availableItems.filter { !$0.isVideo }.sorted { $0.createdAt > $1.createdAt }
-        case .videoOnly: availableItems.filter(\.isVideo).sorted { $0.createdAt > $1.createdAt }
-        }
+        kind.sortedItems(from: allItems)
     }
 
     var body: some View {

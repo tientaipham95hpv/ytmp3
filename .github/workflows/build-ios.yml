@@ -57,6 +57,14 @@ jobs:
             -o "$RUNNER_TEMP/statistics-tests"
           "$RUNNER_TEMP/statistics-tests"
 
+      - name: Test local Home sections and recommendations
+        run: |
+          swiftc \
+            OfflineTube/OfflineTube/Services/HomeContentService.swift \
+            OfflineTube/HomeContentTests/main.swift \
+            -o "$RUNNER_TEMP/home-content-tests"
+          "$RUNNER_TEMP/home-content-tests"
+
       - name: Test local search with 50k fake records
         run: |
           set -euo pipefail

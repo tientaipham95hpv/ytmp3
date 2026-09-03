@@ -1,6 +1,24 @@
 import Foundation
 import SwiftData
 
+enum BuiltInSmartPlaylist: CaseIterable {
+    case recentlyAdded, recentlyPlayed, mostPlayed, favorites, neverPlayed, largeFiles, audioOnly, videoOnly
+
+    func sortedItems(from items: [MediaItem]) -> [MediaItem] {
+        let availableItems = items.filter(\.isAvailableOffline)
+        return switch self {
+        case .recentlyAdded: availableItems.sorted { $0.createdAt > $1.createdAt }
+        case .recentlyPlayed: availableItems.filter { $0.lastPlayedAt != nil }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
+        case .mostPlayed: availableItems.filter { $0.playCount > 0 }.sorted { $0.playCount != $1.playCount ? $0.playCount > $1.playCount : $0.createdAt > $1.createdAt }
+        case .favorites: availableItems.filter(\.isFavorite).sorted { $0.createdAt > $1.createdAt }
+        case .neverPlayed: availableItems.filter { $0.playCount == 0 }.sorted { $0.createdAt > $1.createdAt }
+        case .largeFiles: availableItems.filter { $0.fileSize >= 100 * 1_048_576 }.sorted { $0.fileSize > $1.fileSize }
+        case .audioOnly: availableItems.filter { !$0.isVideo }.sorted { $0.createdAt > $1.createdAt }
+        case .videoOnly: availableItems.filter(\.isVideo).sorted { $0.createdAt > $1.createdAt }
+        }
+    }
+}
+
 enum SmartRuleField: String, Codable, CaseIterable, Identifiable {
     case mediaType, favorite, textContains, minimumFileSizeMB, addedWithinDays, minimumPlayCount
     var id: String { rawValue }

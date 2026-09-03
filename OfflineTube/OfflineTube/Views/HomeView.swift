@@ -8,16 +8,14 @@ struct HomeView: View {
     @EnvironmentObject private var downloads: DownloadViewModel
     @EnvironmentObject private var network: NetworkMonitor
     @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
+    @Query(sort: \MediaPlaylist.updatedAt, order: .reverse) private var playlists: [MediaPlaylist]
     @FocusState private var isURLFocused: Bool
     @State private var showBatchDownload = false
     @State private var showScheduler = false
     @State private var scheduledAt = Date().addingTimeInterval(3600)
     @State private var scheduledWiFiOnly = true
     @State private var scheduledChargingOnly = false
-
-    private var recentlyPlayed: [MediaItem] {
-        items.filter { $0.lastPlayedAt != nil }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
-    }
+    @State private var homeContent = HomeContent()
 
     var body: some View {
         ScrollView {
@@ -33,8 +31,15 @@ struct HomeView: View {
                 if downloads.isLoadingInfo { metadataSkeleton }
                 if let error = downloads.errorMessage { errorState(error) }
                 if let info = downloads.mediaInfo { mediaCard(info) }
-                mediaSection("Recent Downloads", items: Array(items.prefix(8)))
-                mediaSection("Recently Played", items: Array(recentlyPlayed.prefix(8)))
+                mediaSection("Continue Listening", items: resolved(homeContent.continueListening), emptyMessage: "Partly played media appears here")
+                mediaSection("Recently Added", items: resolved(homeContent.recentlyAdded))
+                mediaSection("Recently Played", items: resolved(homeContent.recentlyPlayed))
+                mediaSection("Favorites", items: resolved(homeContent.favorites))
+                mediaSection("Most Played", items: resolved(homeContent.mostPlayed))
+                mediaSection("Recommended for You", items: resolved(homeContent.recommendations), emptyMessage: "Recommendations improve as you listen")
+                mediaSection("Forgotten Downloads", items: resolved(homeContent.forgottenDownloads), emptyMessage: "Downloads untouched for 60 days appear here")
+                mediaSection("Large Files", items: resolved(homeContent.largeFiles), emptyMessage: "Files over 100 MB appear here")
+                playlistSection
             }
             .padding(.horizontal, 18)
             .padding(.bottom, 24)
@@ -57,6 +62,7 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showBatchDownload) { BatchDownloadView() }
         .sheet(isPresented: $showScheduler) { schedulerSheet }
+        .task(id: contentFingerprint) { await refreshHome() }
         .confirmationDialog("Possible duplicate found", isPresented: $downloads.showDuplicateWarning, titleVisibility: .visible) {
             if let existing = downloads.duplicateMatches.first { Button("Play Existing") { player.play(existing) } }
             Button("Download Anyway") { downloads.downloadAnyway(modelContext: modelContext) }
@@ -190,11 +196,11 @@ struct HomeView: View {
         Task { await downloads.download(modelContext: modelContext, ignoreWindow: ignoreWindow) }
     }
 
-    @ViewBuilder private func mediaSection(_ title: String, items: [MediaItem]) -> some View {
+    @ViewBuilder private func mediaSection(_ title: String, items: [MediaItem], emptyMessage: String = "Nothing here yet") -> some View {
         VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: title)
             if items.isEmpty {
-                HStack { Image(systemName: "sparkles"); Text("Nothing here yet").foregroundStyle(.secondary); Spacer() }
+                HStack { Image(systemName: "sparkles"); Text(emptyMessage).foregroundStyle(.secondary); Spacer() }
                     .padding().background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -218,6 +224,64 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private var playlistSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(title: "Your Playlists")
+            if homeContent.playlists.isEmpty {
+                HStack { Image(systemName: "music.note.list"); Text("Create a playlist to see it here").foregroundStyle(.secondary); Spacer() }
+                    .padding().background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 12) {
+                        ForEach(resolvedPlaylists) { playlist in
+                            NavigationLink { PlaylistDetailView(playlist: playlist, allItems: items) } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Image(systemName: "music.note.list").font(.title2).foregroundStyle(.tint)
+                                    Text(playlist.name).font(.headline).lineLimit(2)
+                                    Text("\(playlist.itemIDs.count) items").font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(14).frame(width: 160, height: 110, alignment: .leading)
+                                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var resolvedPlaylists: [MediaPlaylist] {
+        let byID = Dictionary(uniqueKeysWithValues: playlists.map { ($0.id, $0) })
+        return homeContent.playlists.compactMap { byID[$0] }
+    }
+
+    private func resolved(_ ids: [UUID]) -> [MediaItem] {
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        return ids.compactMap { byID[$0] }
+    }
+
+    private var contentFingerprint: Int {
+        var hasher = Hasher()
+        for item in items {
+            hasher.combine(item.id); hasher.combine(item.createdAt); hasher.combine(item.lastPlayedAt)
+            hasher.combine(item.playCount); hasher.combine(item.playbackPosition); hasher.combine(item.isFavorite); hasher.combine(item.fileSize)
+        }
+        for playlist in playlists { hasher.combine(playlist.id); hasher.combine(playlist.updatedAt); hasher.combine(playlist.itemIDs) }
+        return hasher.finalize()
+    }
+
+    private func refreshHome() async {
+        let values = items.map {
+            HomeMediaSnapshot(id: $0.id, channel: $0.channel, duration: $0.duration, playbackPosition: $0.playbackPosition,
+                createdAt: $0.createdAt, isFavorite: $0.isFavorite, fileSize: $0.fileSize,
+                lastPlayedAt: $0.lastPlayedAt, playCount: $0.playCount, localPath: $0.localURL.path)
+        }
+        let playlistValues = playlists.map { HomePlaylistSnapshot(id: $0.id, itemIDs: $0.itemIDs, updatedAt: $0.updatedAt) }
+        homeContent = await Task.detached(priority: .userInitiated) {
+            HomeContentService.make(items: values, playlists: playlistValues)
+        }.value
     }
 
     private func fetchInfo() {
