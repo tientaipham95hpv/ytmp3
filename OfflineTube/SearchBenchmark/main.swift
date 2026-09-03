@@ -24,12 +24,12 @@ let request = LocalSearchRequest(
     sort: .relevance
 )
 
-let started = ContinuousClock.now
+let started = Date()
 let response = LocalSearchEngine.searchSynchronously(documents: documents, request: request)
-let elapsed = started.duration(to: .now)
+let elapsed = Date().timeIntervalSince(started)
 
 precondition(response.hits.count == 50, "Expected 50 exact fake-dataset matches")
-precondition(elapsed < .seconds(8), "Search exceeded the 8-second safety budget")
+precondition(elapsed < 8, "Search exceeded the 8-second safety budget")
 
 let filtered = LocalSearchEngine.searchSynchronously(
     documents: documents,
@@ -42,4 +42,4 @@ let filtered = LocalSearchEngine.searchSynchronously(
     )
 )
 precondition(filtered.hits.allSatisfy { $0.kind == .media }, "Filtered results must contain media only")
-print("Local search benchmark: \(documentCount) documents, \(response.hits.count) matches in \(elapsed)")
+print(String(format: "Local search benchmark: %d documents, %d matches in %.3f seconds", documentCount, response.hits.count, elapsed))
