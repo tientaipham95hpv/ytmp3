@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -14,6 +16,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
+from collections import defaultdict, deque
 from pathlib import Path
 from threading import Lock
 from typing import Literal
@@ -38,6 +41,7 @@ state_lock = Lock()
 POT_PROVIDER_URL = os.getenv("POT_PROVIDER_URL", "http://pot-provider:4416")
 YOUTUBE_COOKIES_FILE = Path(os.getenv("YOUTUBE_COOKIES_FILE", "/run/secrets/youtube-cookies.txt"))
 API_ACCESS_TOKEN_FILE = Path(os.getenv("API_ACCESS_TOKEN_FILE", "/run/secrets/api-access-token.txt"))
+DEVICE_DB_FILE = Path(os.getenv("DEVICE_DB_FILE", DATA_DIR / "devices.sqlite3"))
 MIN_FREE_BYTES = int(os.getenv("MIN_FREE_BYTES", str(512 * 1024 * 1024)))
 MAX_CONCURRENT_DOWNLOADS = max(1, int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2")))
 MAX_DOWNLOAD_SECONDS = max(60, int(os.getenv("MAX_DOWNLOAD_SECONDS", "7200")))
@@ -45,9 +49,16 @@ MAX_DURATION_SECONDS = max(0, int(os.getenv("MAX_DURATION_SECONDS", "14400")))
 MAX_FILE_BYTES = max(0, int(os.getenv("MAX_FILE_BYTES", str(8 * 1024 * 1024 * 1024))))
 TEMP_RETENTION_SECONDS = max(60, int(os.getenv("TEMP_RETENTION_SECONDS", "86400")))
 MAX_PLAYLIST_ITEMS = max(1, min(500, int(os.getenv("MAX_PLAYLIST_ITEMS", "200"))))
+DEVICE_DAILY_JOB_LIMIT = max(1, int(os.getenv("DEVICE_DAILY_JOB_LIMIT", "25")))
+DEVICE_REQUESTS_PER_MINUTE = max(10, int(os.getenv("DEVICE_REQUESTS_PER_MINUTE", "120")))
+DEVICE_MAX_ACTIVE_JOBS = max(1, int(os.getenv("DEVICE_MAX_ACTIVE_JOBS", "2")))
+REGISTRATIONS_PER_IP_HOUR = max(1, int(os.getenv("REGISTRATIONS_PER_IP_HOUR", "5")))
 logger = logging.getLogger("offlinetube.downloads")
 download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 cleanup_task: asyncio.Task | None = None
+file_owners: dict[str, str] = {}
+request_windows: dict[str, deque[float]] = defaultdict(deque)
+registration_windows: dict[str, deque[float]] = defaultdict(deque)
 
 
 def yt_dlp_common_args(cookie_file: Path | None = None) -> list[str]:
@@ -110,6 +121,89 @@ class CookieUpdateRequest(BaseModel):
         return URLRequest(url=value).url
 
 
+class DeviceRegistrationRequest(BaseModel):
+    install_id: str = Field(min_length=32, max_length=64, pattern=r"^[A-Za-z0-9-]+$")
+    app_version: str = Field(default="unknown", min_length=1, max_length=32)
+
+
+def _token_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def initialize_device_db() -> None:
+    DEVICE_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(DEVICE_DB_FILE) as connection:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS devices (
+                install_id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                app_version TEXT NOT NULL,
+                quota_day TEXT NOT NULL,
+                jobs_today INTEGER NOT NULL DEFAULT 0,
+                revoked INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+
+
+def find_device(token: str) -> dict | None:
+    initialize_device_db()
+    with sqlite3.connect(DEVICE_DB_FILE) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            "SELECT install_id, revoked, quota_day, jobs_today FROM devices WHERE token_hash = ?",
+            (_token_hash(token),),
+        ).fetchone()
+        if row is None or row["revoked"]:
+            return None
+        connection.execute("UPDATE devices SET last_seen_at = ? WHERE install_id = ?", (utc_now(), row["install_id"]))
+        return dict(row)
+
+
+def consume_daily_job(device_id: str) -> None:
+    today = datetime.now(timezone.utc).date().isoformat()
+    with sqlite3.connect(DEVICE_DB_FILE) as connection:
+        row = connection.execute(
+            "SELECT quota_day, jobs_today FROM devices WHERE install_id = ?", (device_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=401, detail="Device authorization is invalid.")
+        count = int(row[1]) if row[0] == today else 0
+        if count >= DEVICE_DAILY_JOB_LIMIT:
+            raise HTTPException(status_code=429, detail="Daily download quota reached. Please try again tomorrow.")
+        connection.execute(
+            "UPDATE devices SET quota_day = ?, jobs_today = ? WHERE install_id = ?",
+            (today, count + 1, device_id),
+        )
+
+
+def _within_rate_limit(bucket: deque[float], limit: int, seconds: int) -> bool:
+    now = time.monotonic()
+    while bucket and bucket[0] <= now - seconds:
+        bucket.popleft()
+    if len(bucket) >= limit:
+        return False
+    bucket.append(now)
+    return True
+
+
+def client_ip(request: Request) -> str:
+    """Trust proxy headers only because the service is bound to loopback in compose."""
+    peer = request.client.host if request.client else "unknown"
+    if peer in {"127.0.0.1", "::1"}:
+        forwarded = request.headers.get("x-real-ip") or request.headers.get("x-forwarded-for", "").split(",")[0]
+        if forwarded.strip():
+            return forwarded.strip()[:64]
+    return peer
+
+
+def public_job(job: dict) -> dict:
+    result = dict(job)
+    result.pop("owner", None)
+    return result
+
+
 async def cleanup_loop() -> None:
     while True:
         await asyncio.to_thread(cleanup_stale_data)
@@ -119,6 +213,7 @@ async def cleanup_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global cleanup_task
+    initialize_device_db()
     cleanup_stale_data()
     cleanup_task = asyncio.create_task(cleanup_loop())
     yield
@@ -168,13 +263,55 @@ def configured_api_token() -> str | None:
 
 @app.middleware("http")
 async def protect_api(request, call_next):
-    token = configured_api_token()
-    if token and request.url.path.startswith("/api/"):
-        supplied = request.headers.get("authorization", "")
-        if not secrets.compare_digest(supplied, f"Bearer {token}"):
-            message = "API access token is missing or invalid."
-            return JSONResponse(status_code=401, content={"detail": message, "error_code": "unauthorized", "message": message})
+    if not request.url.path.startswith("/api/") or request.url.path == "/api/auth/register":
+        return await call_next(request)
+    supplied = request.headers.get("authorization", "")
+    bearer = supplied.removeprefix("Bearer ") if supplied.startswith("Bearer ") else ""
+    admin_token = configured_api_token()
+    if admin_token and bearer and secrets.compare_digest(bearer, admin_token):
+        request.state.principal = "admin"
+        request.state.is_admin = True
+        return await call_next(request)
+    device = find_device(bearer) if bearer else None
+    if device is None:
+        message = "Device authorization is missing or invalid."
+        return JSONResponse(status_code=401, content={"detail": message, "error_code": "unauthorized", "message": message})
+    principal = str(device["install_id"])
+    if not _within_rate_limit(request_windows[principal], DEVICE_REQUESTS_PER_MINUTE, 60):
+        message = "Too many requests. Please slow down."
+        return JSONResponse(status_code=429, content={"detail": message, "error_code": "rate_limited", "message": message})
+    request.state.principal = principal
+    request.state.is_admin = False
     return await call_next(request)
+
+
+@app.post("/api/auth/register", status_code=201)
+async def register_device(payload: DeviceRegistrationRequest, request: Request) -> dict:
+    source_ip = client_ip(request)
+    if not _within_rate_limit(registration_windows[source_ip], REGISTRATIONS_PER_IP_HOUR, 3600):
+        raise HTTPException(status_code=429, detail="Too many device registrations from this network.")
+    initialize_device_db()
+    now = utc_now()
+    today = datetime.now(timezone.utc).date().isoformat()
+    with sqlite3.connect(DEVICE_DB_FILE) as connection:
+        existing = connection.execute(
+            "SELECT revoked FROM devices WHERE install_id = ?", (payload.install_id,)
+        ).fetchone()
+        if existing is not None and existing[0]:
+            raise HTTPException(status_code=403, detail="This device has been revoked.")
+        token = secrets.token_urlsafe(32)
+        if existing is None:
+            connection.execute(
+                "INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, 0, 0)",
+                (payload.install_id, _token_hash(token), now, now, payload.app_version, today),
+            )
+        else:
+            connection.execute(
+                "UPDATE devices SET token_hash = ?, last_seen_at = ?, app_version = ? WHERE install_id = ?",
+                (_token_hash(token), now, payload.app_version, payload.install_id),
+            )
+    logger.info("device=%s registered app_version=%s", payload.install_id[:8], payload.app_version)
+    return {"access_token": token, "token_type": "bearer", "daily_job_limit": DEVICE_DAILY_JOB_LIMIT}
 
 
 def require_binary(name: str) -> None:
@@ -200,9 +337,11 @@ async def health() -> dict:
 
 
 @app.get("/api/jobs")
-async def list_jobs() -> dict:
+async def list_jobs(request: Request) -> dict:
+    principal = request.state.principal
     with state_lock:
-        items = sorted((dict(job) for job in jobs.values()), key=lambda job: job["created_at"], reverse=True)
+        visible = jobs.values() if request.state.is_admin else (job for job in jobs.values() if job.get("owner") == principal)
+        items = sorted((public_job(job) for job in visible), key=lambda job: job["created_at"], reverse=True)
     return {
         "items": items,
         "queued": sum(item["status"] == "queued" for item in items),
@@ -450,6 +589,7 @@ def cleanup_stale_data() -> None:
             jobs.pop(job_id, None)
         for file_id in stale_file_ids:
             path = files.pop(file_id, None)
+            file_owners.pop(file_id, None)
             if path and path.is_file():
                 path.unlink(missing_ok=True)
     for path in DOWNLOAD_DIR.iterdir():
@@ -521,6 +661,7 @@ def execute_download(job_id: str, request: DownloadRequest) -> None:
         file_id = uuid.uuid4().hex
         with state_lock:
             files[file_id] = result_path
+            file_owners[file_id] = str(jobs.get(job_id, {}).get("owner", "admin"))
         update_job(job_id, status="completed", progress=100.0, file_id=file_id, filename=result_path.name)
         logger.info("job=%s completed file=%s", job_id, result_path.name)
     except Exception as exc:
@@ -546,11 +687,21 @@ async def run_queued_download(job_id: str, request: DownloadRequest) -> None:
 
 
 @app.post("/api/media/download", status_code=202)
-async def media_download(request: DownloadRequest) -> dict[str, str]:
+async def media_download(request: DownloadRequest, http_request: Request) -> dict[str, str]:
     cleanup_stale_data()
     free_bytes = shutil.disk_usage(DOWNLOAD_DIR).free
     if free_bytes < MIN_FREE_BYTES:
         raise HTTPException(status_code=507, detail="Máy chủ không đủ dung lượng trống để bắt đầu tải.")
+    owner = http_request.state.principal
+    if not http_request.state.is_admin:
+        with state_lock:
+            active_for_device = sum(
+                job.get("owner") == owner and job.get("status") in {"queued", "downloading"}
+                for job in jobs.values()
+            )
+        if active_for_device >= DEVICE_MAX_ACTIVE_JOBS:
+            raise HTTPException(status_code=429, detail="This device already has the maximum number of active downloads.")
+        consume_daily_job(owner)
     job_id = uuid.uuid4().hex
     now = utc_now()
     with state_lock:
@@ -559,6 +710,7 @@ async def media_download(request: DownloadRequest) -> dict[str, str]:
             "media_type": request.media_type, "quality": request.quality,
             "file_id": None, "filename": None, "error": None,
             "downloaded_bytes": 0, "total_bytes": None, "speed_bytes_per_second": None,
+            "owner": owner,
             "created_at": now, "updated_at": now,
         }
     task = asyncio.create_task(run_queued_download(job_id, request))
@@ -568,12 +720,14 @@ async def media_download(request: DownloadRequest) -> dict[str, str]:
 
 
 @app.post("/api/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str) -> dict[str, str]:
+async def cancel_job(job_id: str, request: Request) -> dict[str, str]:
     if not re.fullmatch(r"[0-9a-f]{32}", job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     with state_lock:
         job = jobs.get(job_id)
         if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not request.state.is_admin and job.get("owner") != request.state.principal:
             raise HTTPException(status_code=404, detail="Job not found")
         if job["status"] in {"completed", "failed", "cancelled"}:
             return {"id": job_id, "status": str(job["status"])}
@@ -592,22 +746,27 @@ async def cancel_job(job_id: str) -> dict[str, str]:
 
 
 @app.get("/api/jobs/{job_id}")
-async def job_status(job_id: str) -> dict:
+async def job_status(job_id: str, request: Request) -> dict:
     if not re.fullmatch(r"[0-9a-f]{32}", job_id):
         raise HTTPException(status_code=404, detail="Job not found")
     with state_lock:
         job = jobs.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        return dict(job)
+        if not request.state.is_admin and job.get("owner") != request.state.principal:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return public_job(job)
 
 
 @app.get("/api/files/{file_id}")
-async def get_file(file_id: str) -> FileResponse:
+async def get_file(file_id: str, request: Request) -> FileResponse:
     if not re.fullmatch(r"[0-9a-f]{32}", file_id):
         raise HTTPException(status_code=404, detail="File not found")
     with state_lock:
         path = files.get(file_id)
+        owner = file_owners.get(file_id)
+    if not request.state.is_admin and owner != request.state.principal:
+        raise HTTPException(status_code=404, detail="File not found")
     if path is None or not path.is_file() or path.parent.resolve() != DOWNLOAD_DIR.resolve():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
@@ -631,7 +790,9 @@ def validate_cookie_text(value: str) -> None:
 
 
 @app.post("/api/admin/youtube-cookies")
-async def update_youtube_cookies(request: CookieUpdateRequest) -> dict[str, str]:
+async def update_youtube_cookies(request: CookieUpdateRequest, http_request: Request) -> dict[str, str]:
+    if not http_request.state.is_admin:
+        raise HTTPException(status_code=403, detail="Administrator authorization is required.")
     validate_cookie_text(request.cookies)
     YOUTUBE_COOKIES_FILE.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary_name = tempfile.mkstemp(prefix=".youtube-cookies-", dir=YOUTUBE_COOKIES_FILE.parent)

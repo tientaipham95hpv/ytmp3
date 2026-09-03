@@ -15,6 +15,7 @@ services:
       POT_PROVIDER_URL: http://pot-provider:4416
       YOUTUBE_COOKIES_FILE: /run/secrets/youtube-cookies.txt
       API_ACCESS_TOKEN_FILE: /run/secrets/api-access-token.txt
+      DEVICE_DB_FILE: /data/devices.sqlite3
       CORS_ORIGINS: "*"
       MAX_CONCURRENT_DOWNLOADS: "2"
       MAX_DOWNLOAD_SECONDS: "7200"
@@ -22,6 +23,10 @@ services:
       MAX_FILE_BYTES: "8589934592"
       TEMP_RETENTION_SECONDS: "86400"
       MAX_PLAYLIST_ITEMS: "200"
+      DEVICE_DAILY_JOB_LIMIT: "25"
+      DEVICE_REQUESTS_PER_MINUTE: "120"
+      DEVICE_MAX_ACTIVE_JOBS: "2"
+      REGISTRATIONS_PER_IP_HOUR: "5"
       PYTHONUNBUFFERED: "1"
     depends_on:
       - pot-provider

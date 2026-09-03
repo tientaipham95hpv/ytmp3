@@ -21,5 +21,13 @@ Production deployments should put the API behind HTTPS, set `CORS_ORIGINS`, pers
 - `TEMP_RETENTION_SECONDS` (default `86400`)
 - `MAX_PLAYLIST_ITEMS` (default `200`, hard maximum `500`)
 - `MIN_FREE_BYTES` (default `536870912`)
+- `DEVICE_DAILY_JOB_LIMIT` (default `25`)
+- `DEVICE_REQUESTS_PER_MINUTE` (default `120`)
+- `DEVICE_MAX_ACTIVE_JOBS` (default `2`)
+- `REGISTRATIONS_PER_IP_HOUR` (default `5`)
 
 `GET /health` exposes queue and disk health. Authenticated `GET /api/jobs` lists current jobs and queue counts. Finished jobs and files are removed automatically after the configured retention period.
+
+The iOS app registers each installation through `POST /api/auth/register`, stores its device token in Keychain, and renews it automatically after a `401`. Device tokens are stored as SHA-256 hashes in the persistent `/data/devices.sqlite3` database. Jobs and result files are isolated by device.
+
+The token provisioned with `make provision-api-token` is the administrator token. It is required for operations such as replacing the YouTube cookie and must not be distributed to public users. Legacy app versions remain compatible during migration, but new app versions use device tokens for normal downloads.

@@ -40,6 +40,18 @@ struct JobCreated: Codable, Sendable {
 
 struct ServerMessage: Codable, Sendable { let status: String; let message: String? }
 
+private struct DeviceRegistration: Codable, Sendable {
+    let accessToken: String
+    let tokenType: String
+    let dailyJobLimit: Int
+
+    enum CodingKeys: String, CodingKey {
+        case accessToken = "access_token"
+        case tokenType = "token_type"
+        case dailyJobLimit = "daily_job_limit"
+    }
+}
+
 struct DownloadJob: Codable, Sendable {
     let id: String
     let status: String
@@ -108,18 +120,50 @@ actor APIClient {
         return baseURL.appendingPathComponent(path)
     }
 
-    private func authorize(_ request: inout URLRequest) {
+    private func authorize(_ request: inout URLRequest, admin: Bool = false) {
+        if admin, let token = KeychainStore.adminToken(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            return
+        }
         if let token = KeychainStore.token(), !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+    }
+
+    private func ensureDeviceToken() async throws {
+        guard KeychainStore.token()?.isEmpty != false else { return }
+        struct Body: Encodable { let install_id: String; let app_version: String }
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        var registration = URLRequest(url: try endpoint("api/auth/register"))
+        registration.httpMethod = "POST"
+        registration.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        registration.timeoutInterval = 30
+        registration.httpBody = try encoder.encode(Body(install_id: KeychainStore.installID(), app_version: version))
+        let (data, response) = try await performData(for: registration, path: "api/auth/register")
+        try validate(response: response, data: data)
+        let result = try decoder.decode(DeviceRegistration.self, from: data)
+        try KeychainStore.saveDeviceToken(result.accessToken)
+    }
+
+    private func performAuthorizedData(for request: URLRequest, path: String) async throws -> (Data, URLResponse) {
+        try await ensureDeviceToken()
+        var authorized = request
+        authorize(&authorized)
+        var result = try await performData(for: authorized, path: path)
+        if (result.1 as? HTTPURLResponse)?.statusCode == 401 {
+            KeychainStore.deleteDeviceToken()
+            try await ensureDeviceToken()
+            authorize(&authorized)
+            result = try await performData(for: authorized, path: path)
+        }
+        return result
     }
 
     private func request<T: Decodable, Body: Encodable>(_ path: String, method: String = "POST", body: Body) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
         request.httpMethod = method
-        authorize(&request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
         request.httpBody = try encoder.encode(body)
-        let (data, response) = try await performData(for: request, path: path)
+        let (data, response) = try await performAuthorizedData(for: request, path: path)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -127,8 +171,7 @@ actor APIClient {
 
     private func get<T: Decodable>(_ path: String) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
-        authorize(&request)
-        let (data, response) = try await performData(for: request, path: path)
+        let (data, response) = try await performAuthorizedData(for: request, path: path)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -137,9 +180,8 @@ actor APIClient {
     private func post<T: Decodable>(_ path: String) async throws -> T {
         var request = URLRequest(url: try endpoint(path))
         request.httpMethod = "POST"
-        authorize(&request)
         request.timeoutInterval = 30
-        let (data, response) = try await performData(for: request, path: path)
+        let (data, response) = try await performAuthorizedData(for: request, path: path)
         try validate(response: response, data: data)
         do { return try decoder.decode(T.self, from: data) }
         catch { throw APIError.invalidResponse }
@@ -217,13 +259,28 @@ actor APIClient {
 
     func updateYouTubeCookies(_ contents: String) async throws -> ServerMessage {
         struct Body: Encodable { let cookies: String }
-        return try await request("api/admin/youtube-cookies", body: Body(cookies: contents))
+        var request = URLRequest(url: try endpoint("api/admin/youtube-cookies"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try encoder.encode(Body(cookies: contents))
+        authorize(&request, admin: true)
+        let (data, response) = try await performData(for: request, path: "api/admin/youtube-cookies")
+        try validate(response: response, data: data)
+        return try decoder.decode(ServerMessage.self, from: data)
     }
 
     func download(fileID: String, filename: String) async throws -> URL {
+        try await ensureDeviceToken()
         var request = URLRequest(url: try endpoint("api/files/\(fileID)"))
         authorize(&request)
-        let (temporaryURL, response) = try await performDownload(for: request)
+        var (temporaryURL, response) = try await performDownload(for: request)
+        if (response as? HTTPURLResponse)?.statusCode == 401 {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            KeychainStore.deleteDeviceToken()
+            try await ensureDeviceToken()
+            authorize(&request)
+            (temporaryURL, response) = try await performDownload(for: request)
+        }
         try validate(response: response, data: Data())
         let destination = FileStore.destination(filename: filename)
         do {

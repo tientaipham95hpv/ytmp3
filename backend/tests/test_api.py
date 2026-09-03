@@ -1,13 +1,37 @@
 import json
 import os
+import sqlite3
 import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app import main
 
 client = TestClient(main.app)
+
+
+@pytest.fixture(autouse=True)
+def authorized_device(tmp_path: Path, monkeypatch):
+    database = tmp_path / "devices.sqlite3"
+    monkeypatch.setattr(main, "DEVICE_DB_FILE", database)
+    main.initialize_device_db()
+    token = "test-device-token"
+    now = main.utc_now()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, 0, 0)",
+            ("device-test-id-00000000000000000000", main._token_hash(token), now, now, "test", "2000-01-01"),
+        )
+    client.headers["Authorization"] = f"Bearer {token}"
+    main.request_windows.clear()
+    main.registration_windows.clear()
+    yield
+    client.headers.pop("Authorization", None)
+    main.jobs.clear()
+    main.files.clear()
+    main.file_owners.clear()
 
 
 def test_health():
@@ -22,7 +46,8 @@ def test_health():
 def test_job_queue_summary():
     job_id = "b" * 32
     main.jobs[job_id] = {
-        "id": job_id, "status": "queued", "created_at": main.utc_now(), "updated_at": main.utc_now()
+        "id": job_id, "owner": "device-test-id-00000000000000000000",
+        "status": "queued", "created_at": main.utc_now(), "updated_at": main.utc_now()
     }
     try:
         response = client.get("/api/jobs")
@@ -153,7 +178,9 @@ def test_api_token_protects_api_routes(tmp_path: Path, monkeypatch):
     token_file = tmp_path / "token"
     token_file.write_text("secret-test-token")
     monkeypatch.setattr(main, "API_ACCESS_TOKEN_FILE", token_file)
-    unauthorized = client.post("/api/media/info", json={"url": "https://youtu.be/abc"})
+    unauthorized = client.post(
+        "/api/media/info", json={"url": "https://youtu.be/abc"}, headers={"Authorization": ""}
+    )
     assert unauthorized.status_code == 401
     assert unauthorized.json()["error_code"] == "unauthorized"
     response = client.post(
@@ -162,6 +189,37 @@ def test_api_token_protects_api_routes(tmp_path: Path, monkeypatch):
         headers={"Authorization": "Bearer secret-test-token"},
     )
     assert response.status_code == 422
+
+
+def test_device_registration_and_authentication():
+    response = client.post(
+        "/api/auth/register",
+        json={"install_id": "new-device-id-000000000000000000000", "app_version": "1.4.0"},
+        headers={"Authorization": ""},
+    )
+    assert response.status_code == 201
+    token = response.json()["access_token"]
+    assert token
+    jobs = client.get("/api/jobs", headers={"Authorization": f"Bearer {token}"})
+    assert jobs.status_code == 200
+
+
+def test_device_cannot_access_another_devices_job():
+    job_id = "c" * 32
+    main.jobs[job_id] = {
+        "id": job_id, "owner": "another-device", "status": "queued",
+        "created_at": main.utc_now(), "updated_at": main.utc_now(),
+    }
+    response = client.get(f"/api/jobs/{job_id}")
+    assert response.status_code == 404
+
+
+def test_device_cannot_use_admin_cookie_endpoint():
+    response = client.post(
+        "/api/admin/youtube-cookies",
+        json={"cookies": "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tvalue"},
+    )
+    assert response.status_code == 403
 
 
 def test_cookie_validation_accepts_netscape_youtube_cookie():

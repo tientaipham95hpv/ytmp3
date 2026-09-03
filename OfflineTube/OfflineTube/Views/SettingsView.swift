@@ -58,26 +58,26 @@ struct SettingsView: View {
                 Text("Online search stays disabled until a provider URL is configured. The optional API key is stored in Keychain and never hardcoded in the app.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("Server Security") {
-                SecureField("Device access token", text: $accessToken)
+            Section("Server Administration") {
+                SecureField("Administrator access token", text: $accessToken)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                Button("Save access token") { saveToken() }.disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Save administrator token") { saveToken() }.disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     showCookieImporter = true
                 } label: {
                     if isUpdatingCookies { HStack { ProgressView(); Text("Checking and updating cookies…") } }
                     else { Label("Replace YouTube cookies", systemImage: "lock.doc") }
-                }.disabled(KeychainStore.token() == nil || isUpdatingCookies)
+                }.disabled(KeychainStore.adminToken() == nil || isUpdatingCookies)
                 Button { showCookieGuide = true } label: {
                     Label("Get cookies on iPhone", systemImage: "iphone.and.arrow.forward")
                 }
-                Text("The token stays in iOS Keychain. Cookie files are verified by the server before replacing the active cookie.")
+                Text("Downloads are authorized automatically per device. This administrator token is only needed to replace the server's YouTube cookie.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
         }
         .navigationTitle("Settings")
-        .task { accessToken = KeychainStore.token() ?? ""; lyricsAPIKey = KeychainStore.lyricsAPIKey() ?? "" }
+        .task { accessToken = KeychainStore.adminToken() ?? ""; lyricsAPIKey = KeychainStore.lyricsAPIKey() ?? "" }
         .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             updateCookies(from: url)
