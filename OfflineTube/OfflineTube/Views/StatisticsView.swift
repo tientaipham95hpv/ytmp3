@@ -4,6 +4,12 @@ import SwiftUI
 
 struct StatisticsView: View {
     enum Range: String, CaseIterable, Identifiable { case week = "Week", month = "Month"; var id: String { rawValue } }
+    private struct ChannelRecord: Identifiable {
+        var id: String { name }
+        let name: String
+        let plays: Int
+        let seconds: Double
+    }
 
     @Query private var items: [MediaItem]
     @State private var snapshot = StatisticsSnapshot()
@@ -16,11 +22,19 @@ struct StatisticsView: View {
         }.prefix(10).map { $0 }
     }
 
-    private var topChannels: [(name: String, plays: Int, seconds: Double)] {
+    private var topChannels: [ChannelRecord] {
         let grouped = Dictionary(grouping: snapshot.media.values, by: { $0.channel.isEmpty ? "Unknown" : $0.channel })
-        return grouped.map { name, records in
-            (name, records.reduce(0) { $0 + $1.playCount }, records.reduce(0) { $0 + $1.activeSeconds })
-        }.sorted { $0.plays == $1.plays ? $0.seconds > $1.seconds : $0.plays > $1.plays }.prefix(10).map { $0 }
+        var result: [ChannelRecord] = []
+        for (name, records) in grouped {
+            let plays = records.reduce(0) { partial, record in partial + record.playCount }
+            let seconds = records.reduce(0.0) { partial, record in partial + record.activeSeconds }
+            result.append(ChannelRecord(name: name, plays: plays, seconds: seconds))
+        }
+        result.sort {
+            if $0.plays != $1.plays { return $0.plays > $1.plays }
+            return $0.seconds > $1.seconds
+        }
+        return Array(result.prefix(10))
     }
 
     private var chartDays: [StatisticsDayRecord] {
@@ -105,7 +119,7 @@ struct StatisticsView: View {
     private var rankedChannels: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Top Channels / Artists").font(.title3.bold())
-            ForEach(Array(topChannels.enumerated()), id: \.element.name) { index, channel in
+            ForEach(Array(topChannels.enumerated()), id: \.element.id) { index, channel in
                 HStack { Text("\(index + 1)").foregroundStyle(.secondary).frame(width: 24); Text(channel.name).lineLimit(1); Spacer(); Text("\(channel.plays)").font(.caption.monospacedDigit()) }
             }
         }
