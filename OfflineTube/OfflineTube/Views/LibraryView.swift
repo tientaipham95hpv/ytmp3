@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct LibraryView: View {
     enum Filter: String, CaseIterable, Identifiable { case all = "All", audio = "Audio", video = "Video", favorites = "Favorites"; var id: String { rawValue } }
@@ -18,6 +19,9 @@ struct LibraryView: View {
     @State private var metadataTarget: MediaItem?
     @State private var showBatchMetadataEditor = false
     @State private var showDuplicates = false
+    @State private var showFileImporter = false
+    @State private var isImporting = false
+    @State private var importProgress = ""
 
     private var filteredItems: [MediaItem] {
         var result = items.filter { item in
@@ -61,6 +65,8 @@ struct LibraryView: View {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 NavigationLink { StatisticsView() } label: { Image(systemName: "chart.bar.xaxis") }
                     .accessibilityLabel("Statistics")
+                Button { showFileImporter = true } label: { Image(systemName: "square.and.arrow.down") }
+                    .accessibilityLabel("Import from Files")
                 Menu {
                     Picker("Sort", selection: $sort) { ForEach(Sort.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) } }
                 } label: { Image(systemName: "arrow.up.arrow.down") }
@@ -75,6 +81,18 @@ struct LibraryView: View {
         .sheet(item: $metadataTarget) { item in MetadataEditorView(item: item) }
         .sheet(isPresented: $showBatchMetadataEditor) { BatchMetadataEditorView(items: items.filter(\.isAvailableOffline)) }
         .sheet(isPresented: $showDuplicates) { DuplicatesView() }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: LocalMediaImporter.allowedTypes, allowsMultipleSelection: true) { result in
+            switch result {
+            case .success(let urls): Task { await importFiles(urls) }
+            case .failure(let error): errorMessage = error.localizedDescription
+            }
+        }
+        .overlay {
+            if isImporting {
+                VStack(spacing: 12) { ProgressView(); Text(importProgress).font(.subheadline).multilineTextAlignment(.center) }
+                    .padding(24).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20)).shadow(radius: 12)
+            }
+        }
         .alert("Couldn’t update Library", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "Unknown error") }
@@ -84,7 +102,10 @@ struct LibraryView: View {
         ContentUnavailableView {
             Label("Your Library is empty", systemImage: "music.note.house")
         } description: {
-            Text("Downloads will appear here, ready to play offline.")
+            Text("Downloads and media imported from Files will appear here, ready to play offline.")
+        } actions: {
+            Button("Import from Files") { showFileImporter = true }
+                .buttonStyle(.borderedProminent)
         }
     }
 
@@ -178,6 +199,42 @@ struct LibraryView: View {
             try modelContext.save()
             Haptics.success()
         } catch { errorMessage = error.localizedDescription }
+    }
+
+    @MainActor private func importFiles(_ urls: [URL]) async {
+        guard !urls.isEmpty else { return }
+        isImporting = true
+        var importedCount = 0
+        var failures: [String] = []
+        for (index, url) in urls.enumerated() {
+            importProgress = "Importing \(index + 1) of \(urls.count)…"
+            do {
+                let imported = try await LocalMediaImporter.importFile(from: url)
+                let item = MediaItem(sourceID: imported.sourceID, sourceURL: imported.sourceURL, title: imported.title,
+                    channel: imported.artist, thumbnailURL: nil, duration: imported.duration,
+                    localFilename: imported.localFilename, mediaType: imported.mediaType, quality: imported.quality)
+                item.fileSize = imported.fileSize
+                item.artworkFilename = imported.artworkFilename
+                modelContext.insert(item)
+                do {
+                    try modelContext.save()
+                } catch {
+                    try? FileStore.remove(item)
+                    modelContext.delete(item)
+                    throw error
+                }
+                importedCount += 1
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        isImporting = false
+        importProgress = ""
+        if failures.isEmpty {
+            Haptics.success()
+        } else {
+            errorMessage = "Imported \(importedCount) of \(urls.count).\n\n" + failures.prefix(5).joined(separator: "\n")
+        }
     }
 }
 

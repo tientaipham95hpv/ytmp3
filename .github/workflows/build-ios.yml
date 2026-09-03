@@ -65,6 +65,14 @@ jobs:
             -o "$RUNNER_TEMP/home-content-tests"
           "$RUNNER_TEMP/home-content-tests"
 
+      - name: Test local media import formats
+        run: |
+          swiftc \
+            OfflineTube/OfflineTube/Services/LocalMediaImportPolicy.swift \
+            OfflineTube/LocalMediaImportTests/main.swift \
+            -o "$RUNNER_TEMP/local-import-tests"
+          "$RUNNER_TEMP/local-import-tests"
+
       - name: Test local search with 50k fake records
         run: |
           set -euo pipefail
