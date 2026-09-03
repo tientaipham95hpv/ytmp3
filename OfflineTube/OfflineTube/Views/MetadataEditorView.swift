@@ -28,35 +28,7 @@ struct MetadataEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Metadata") {
-                    TextField("Title", text: $title, axis: .vertical).lineLimit(1...3)
-                    TextField("Artist / Channel", text: $artist, axis: .vertical).lineLimit(1...3)
-                }
-                Section("Artwork") {
-                    artworkPreview
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label("Choose from Photos", systemImage: "photo.on.rectangle")
-                    }
-                    Button { showFileImporter = true } label: {
-                        Label("Choose from Files", systemImage: "folder")
-                    }
-                    Button {
-                        artworkData = nil
-                        resetArtwork = true
-                    } label: {
-                        Label("Reset to Original Artwork", systemImage: "arrow.counterclockwise")
-                    }
-                    .disabled(item.customArtworkFilename == nil && artworkData == nil)
-                }
-                Section("Notes") {
-                    TextEditor(text: $notes).frame(minHeight: 110)
-                } footer: {
-                    Text("Changes apply only to your local Library and never modify the online source.")
-                }
-            }
+            editorForm
             .navigationTitle("Edit Metadata")
             .navigationBarTitleDisplayMode(.inline)
             .disabled(isSaving)
@@ -73,6 +45,48 @@ struct MetadataEditorView: View {
         .alert("Couldn’t update metadata", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    private var editorForm: some View {
+        Form {
+            metadataSection
+            artworkSection
+            notesSection
+        }
+    }
+
+    private var metadataSection: some View {
+        Section("Metadata") {
+            TextField("Title", text: $title, axis: .vertical).lineLimit(1...3)
+            TextField("Artist / Channel", text: $artist, axis: .vertical).lineLimit(1...3)
+        }
+    }
+
+    private var artworkSection: some View {
+        Section("Artwork") {
+            artworkPreview.frame(maxWidth: .infinity).listRowBackground(Color.clear)
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Label("Choose from Photos", systemImage: "photo.on.rectangle")
+            }
+            Button { showFileImporter = true } label: {
+                Label("Choose from Files", systemImage: "folder")
+            }
+            Button {
+                artworkData = nil
+                resetArtwork = true
+            } label: {
+                Label("Reset to Original Artwork", systemImage: "arrow.counterclockwise")
+            }
+            .disabled(item.customArtworkFilename == nil && artworkData == nil)
+        }
+    }
+
+    private var notesSection: some View {
+        Section("Notes") {
+            TextEditor(text: $notes).frame(minHeight: 110)
+        } footer: {
+            Text("Changes apply only to your local Library and never modify the online source.")
+        }
     }
 
     @ViewBuilder private var artworkPreview: some View {
@@ -165,47 +179,7 @@ struct BatchMetadataEditorView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Button(selection.count == items.count ? "Deselect All" : "Select All") {
-                        selection = selection.count == items.count ? [] : Set(items.map(\.id))
-                    }
-                    ForEach(items) { item in
-                        Button { toggle(item.id) } label: {
-                            HStack {
-                                ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo)
-                                    .frame(width: 54, height: 40)
-                                VStack(alignment: .leading) {
-                                    Text(item.title).lineLimit(1)
-                                    Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer()
-                                Image(systemName: selection.contains(item.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selection.contains(item.id) ? Color.accentColor : .secondary)
-                            }
-                        }.buttonStyle(.plain)
-                    }
-                } header: { Text("Selected: \(selection.count)") }
-
-                Section("Batch Changes") {
-                    Toggle("Replace Artist / Channel", isOn: $replaceArtist)
-                    if replaceArtist { TextField("Artist / Channel", text: $artist) }
-                    Toggle("Replace Notes", isOn: $replaceNotes)
-                    if replaceNotes { TextEditor(text: $notes).frame(minHeight: 80) }
-                    Toggle("Replace Artwork", isOn: $replaceArtwork)
-                    if replaceArtwork {
-                        PhotosPicker(selection: $photoItem, matching: .images) {
-                            Label("Choose from Photos", systemImage: "photo.on.rectangle")
-                        }
-                        Button { showFileImporter = true } label: {
-                            Label("Choose from Files", systemImage: "folder")
-                        }
-                        Toggle("Reset to Original Artwork", isOn: $resetArtwork)
-                    }
-                } footer: {
-                    Text("Batch title editing is intentionally unavailable because each media item needs its own title.")
-                }
-            }
+            batchForm
             .navigationTitle("Batch Edit Metadata").navigationBarTitleDisplayMode(.inline)
             .disabled(isSaving)
             .toolbar {
@@ -221,6 +195,65 @@ struct BatchMetadataEditorView: View {
         .alert("Couldn’t update metadata", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(errorMessage ?? "Unknown error") }
+    }
+
+    private var batchForm: some View {
+        Form {
+            selectionSection
+            changesSection
+        }
+    }
+
+    private var selectionSection: some View {
+        Section {
+            Button(selection.count == items.count ? "Deselect All" : "Select All") {
+                selection = selection.count == items.count ? [] : Set(items.map(\.id))
+            }
+            ForEach(items) { item in selectionRow(item) }
+        } header: {
+            Text("Selected: \(selection.count)")
+        }
+    }
+
+    private func selectionRow(_ item: MediaItem) -> some View {
+        Button { toggle(item.id) } label: {
+            HStack {
+                ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo)
+                    .frame(width: 54, height: 40)
+                VStack(alignment: .leading) {
+                    Text(item.title).lineLimit(1)
+                    Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: selection.contains(item.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selection.contains(item.id) ? Color.accentColor : .secondary)
+            }
+        }.buttonStyle(.plain)
+    }
+
+    private var changesSection: some View {
+        Section("Batch Changes") {
+            Toggle("Replace Artist / Channel", isOn: $replaceArtist)
+            if replaceArtist { TextField("Artist / Channel", text: $artist) }
+            Toggle("Replace Notes", isOn: $replaceNotes)
+            if replaceNotes { TextEditor(text: $notes).frame(minHeight: 80) }
+            Toggle("Replace Artwork", isOn: $replaceArtwork)
+            if replaceArtwork { artworkChanges }
+        } footer: {
+            Text("Batch title editing is intentionally unavailable because each media item needs its own title.")
+        }
+    }
+
+    private var artworkChanges: some View {
+        Group {
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Label("Choose from Photos", systemImage: "photo.on.rectangle")
+            }
+            Button { showFileImporter = true } label: {
+                Label("Choose from Files", systemImage: "folder")
+            }
+            Toggle("Reset to Original Artwork", isOn: $resetArtwork)
+        }
     }
 
     private var canApply: Bool {
