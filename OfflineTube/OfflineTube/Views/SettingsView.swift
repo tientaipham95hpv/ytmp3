@@ -21,6 +21,7 @@ struct SettingsView: View {
     @State private var showCookieGuide = false
     @State private var lyricsAPIKey = ""
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = false
+    @AppStorage("audioCrossfadeSeconds") private var audioCrossfadeSeconds = 0
 
     var body: some View {
         Form {
@@ -31,6 +32,14 @@ struct SettingsView: View {
                 Picker("Default video quality", selection: $videoQuality) {
                     Text("360p").tag("360"); Text("480p").tag("480"); Text("720p").tag("720"); Text("1080p").tag("1080"); Text("Best").tag("best")
                 }
+            }
+            Section("Audio Playback") {
+                Picker("Crossfade", selection: $audioCrossfadeSeconds) {
+                    Text("Off").tag(0)
+                    ForEach([2, 4, 6, 8, 10], id: \.self) { seconds in Text("\(seconds)s").tag(seconds) }
+                }
+                Text("Crossfade overlaps only two local audio tracks near the transition. Video and Repeat One use normal playback.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Storage") {
                 NavigationLink { StorageManagementView() } label: {
@@ -102,6 +111,7 @@ struct SettingsView: View {
         .onChange(of: language) { _, _ in cloudSync.settingsChanged() }
         .onChange(of: backendURL) { _, _ in cloudSync.settingsChanged() }
         .onChange(of: lyricsProviderURL) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: audioCrossfadeSeconds) { _, _ in cloudSync.settingsChanged() }
         .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             updateCookies(from: url)

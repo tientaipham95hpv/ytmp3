@@ -15,7 +15,8 @@ final class PlayerManager: ObservableObject {
 
     static let shared = PlayerManager()
 
-    let player = AVPlayer()
+    private var activePlayer = AVPlayer()
+    var player: AVPlayer { activePlayer }
     @Published private(set) var currentItem: MediaItem?
     @Published private(set) var queue: [MediaItem] = []
     @Published private(set) var originalQueue: [MediaItem] = []
@@ -33,6 +34,11 @@ final class PlayerManager: ObservableObject {
     private var endObserver: NSObjectProtocol?
     private var sleepTask: Task<Void, Never>?
     private var externalPlaybackObserver: AnyCancellable?
+    private var observedTimePlayer: AVPlayer?
+    private var transitionPlayer: AVPlayer?
+    private var transitionItem: MediaItem?
+    private var crossfadeTask: Task<Void, Never>?
+    private var isCrossfading = false
     private var routeChangeObserver: NSObjectProtocol?
     private var modelContext: ModelContext?
     private var lastSavedSecond = -1
@@ -49,29 +55,26 @@ final class PlayerManager: ObservableObject {
     }
 
     private init() {
-        player.allowsExternalPlayback = true
-        player.usesExternalPlaybackWhileExternalScreenIsActive = true
+        configurePlayer(activePlayer)
         configureAudioSession()
         configureRemoteCommands()
         observeAudioSession()
-        externalPlaybackObserver = player.publisher(for: \.isExternalPlaybackActive)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.updateCurrentRoute() }
-            }
+        observeExternalPlayback()
         updateCurrentRoute()
         observeTime()
     }
 
     deinit {
-        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        if let timeObserver, let observedTimePlayer { observedTimePlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let routeChangeObserver { NotificationCenter.default.removeObserver(routeChangeObserver) }
         sleepTask?.cancel()
+        crossfadeTask?.cancel()
     }
 
     func play(_ item: MediaItem, queue newQueue: [MediaItem]? = nil) {
         guard FileManager.default.fileExists(atPath: item.localURL.path) else { return }
+        if currentItem?.id != item.id { cancelCrossfade() }
         if let newQueue {
             originalQueue = deduplicated(newQueue.filter(\.isAvailableOffline))
             queue = isShuffling ? shuffledQueue(originalQueue, keeping: item) : originalQueue
@@ -111,6 +114,7 @@ final class PlayerManager: ObservableObject {
     func toggle() { isPlaying ? pause() : resume() }
 
     func pause() {
+        cancelCrossfade()
         player.pause()
         isPlaying = false
         persistPosition()
@@ -126,6 +130,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func seek(to seconds: Double) {
+        cancelCrossfade()
         let safeValue = max(0, min(seconds, duration > 0 ? duration : seconds))
         player.seek(to: CMTime(seconds: safeValue, preferredTimescale: 600))
         currentTime = safeValue
@@ -137,6 +142,10 @@ final class PlayerManager: ObservableObject {
     func skip(by seconds: Double) { seek(to: currentTime + seconds) }
 
     func next() {
+        if isCrossfading, let transitionItem, let transitionPlayer {
+            finishCrossfade(to: transitionItem, oldPlayer: activePlayer, incoming: transitionPlayer)
+            return
+        }
         guard let currentItem, !queue.isEmpty,
               let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return }
         let nextIndex: Int
@@ -149,10 +158,13 @@ final class PlayerManager: ObservableObject {
             seek(to: 0)
             return
         }
-        play(queue[nextIndex])
+        let target = queue[nextIndex]
+        if shouldCrossfade(to: target) { beginCrossfade(to: target) }
+        else { play(target) }
     }
 
     func previous() {
+        cancelCrossfade()
         if currentTime > 5 { seek(to: 0); return }
         guard let currentItem, !queue.isEmpty,
               let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return }
@@ -223,6 +235,7 @@ final class PlayerManager: ObservableObject {
     }
 
     func setSpeed(_ speed: Float) {
+        cancelCrossfade()
         playbackSpeed = speed
         if isPlaying { player.rate = speed }
         updateNowPlaying()
@@ -249,6 +262,7 @@ final class PlayerManager: ObservableObject {
         queue.removeAll { $0.id == item.id }
         originalQueue.removeAll { $0.id == item.id }
         guard currentItem?.id == item.id else { persistSession(); return }
+        cancelCrossfade()
         pause()
         player.replaceCurrentItem(with: nil)
         currentItem = nil
@@ -285,7 +299,9 @@ final class PlayerManager: ObservableObject {
     }
 
     private func observeTime() {
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 4), queue: .main) { [weak self] time in
+        if let timeObserver, let observedTimePlayer { observedTimePlayer.removeTimeObserver(timeObserver) }
+        observedTimePlayer = activePlayer
+        timeObserver = activePlayer.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 4), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
                 self.currentTime = max(0, time.seconds.isFinite ? time.seconds : 0)
@@ -298,6 +314,7 @@ final class PlayerManager: ObservableObject {
                     self.lastNowPlayingSecond = second
                     self.updateNowPlaying()
                 }
+                self.startAutomaticTransitionIfNeeded()
             }
         }
     }
@@ -307,6 +324,7 @@ final class PlayerManager: ObservableObject {
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                guard !self.isCrossfading else { return }
                 if self.repeatMode == .one {
                     self.seek(to: 0)
                     self.resume()
@@ -325,6 +343,94 @@ final class PlayerManager: ObservableObject {
             if let currentItem { CloudSyncService.markChanged(currentItem) }
             saveContext()
         }
+    }
+
+    private var crossfadeSeconds: Double {
+        Double(UserDefaults.standard.integer(forKey: "audioCrossfadeSeconds"))
+    }
+
+    private func nextQueueItem() -> MediaItem? {
+        guard let currentItem, let index = queue.firstIndex(where: { $0.id == currentItem.id }) else { return nil }
+        if index + 1 < queue.count { return queue[index + 1] }
+        return repeatMode == .all ? queue.first : nil
+    }
+
+    private func shouldCrossfade(to item: MediaItem) -> Bool {
+        crossfadeSeconds > 0 && currentItem?.isVideo == false && !item.isVideo && repeatMode != .one && isPlaying && !isCrossfading
+    }
+
+    private func startAutomaticTransitionIfNeeded() {
+        guard let target = nextQueueItem(), shouldCrossfade(to: target), duration > 0,
+              duration - currentTime <= crossfadeSeconds else { return }
+        beginCrossfade(to: target)
+    }
+
+    private func beginCrossfade(to item: MediaItem) {
+        guard shouldCrossfade(to: item), item.isAvailableOffline else { play(item); return }
+        isCrossfading = true
+        let oldPlayer = activePlayer
+        let incoming = AVPlayer(playerItem: makePlayerItem(for: item))
+        configurePlayer(incoming)
+        incoming.volume = 0
+        transitionPlayer = incoming
+        transitionItem = item
+        incoming.playImmediately(atRate: playbackSpeed)
+        let seconds = crossfadeSeconds
+        crossfadeTask = Task { [weak self, oldPlayer, incoming] in
+            let steps = max(1, Int(seconds * 20))
+            for step in 1...steps {
+                guard !Task.isCancelled else { return }
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+                let progress = Float(step) / Float(steps)
+                oldPlayer.volume = 1 - progress
+                incoming.volume = progress
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.finishCrossfade(to: item, oldPlayer: oldPlayer, incoming: incoming)
+        }
+    }
+
+    private func finishCrossfade(to item: MediaItem, oldPlayer: AVPlayer, incoming: AVPlayer) {
+        crossfadeTask?.cancel()
+        persistPosition()
+        oldPlayer.pause(); oldPlayer.volume = 1
+        activePlayer = incoming; activePlayer.volume = 1
+        transitionPlayer = nil; transitionItem = nil; crossfadeTask = nil; isCrossfading = false
+        currentItem = item
+        item.lastPlayedAt = Date(); item.playCount += 1; CloudSyncService.markChanged(item)
+        duration = item.duration
+        currentTime = max(0, incoming.currentTime().seconds.isFinite ? incoming.currentTime().seconds : 0)
+        lastSavedSecond = Int(currentTime)
+        observeTime()
+        if let playerItem = incoming.currentItem { observeEnd(of: playerItem) }
+        observeExternalPlayback()
+        saveContext(); persistSession(); updateNowPlaying(); updateCurrentRoute()
+    }
+
+    private func cancelCrossfade() {
+        guard isCrossfading || transitionPlayer != nil else { return }
+        crossfadeTask?.cancel(); crossfadeTask = nil
+        transitionPlayer?.pause(); transitionPlayer = nil; transitionItem = nil
+        activePlayer.volume = 1; isCrossfading = false
+    }
+
+    private func makePlayerItem(for item: MediaItem) -> AVPlayerItem {
+        let playerItem = AVPlayerItem(url: item.localURL)
+        playerItem.audioTimePitchAlgorithm = .spectral
+        return playerItem
+    }
+
+    private func configurePlayer(_ player: AVPlayer) {
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
+        player.automaticallyWaitsToMinimizeStalling = false
+    }
+
+    private func observeExternalPlayback() {
+        externalPlaybackObserver = activePlayer.publisher(for: \.isExternalPlaybackActive)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in Task { @MainActor in self?.updateCurrentRoute() } }
     }
 
     private func saveContext() { try? modelContext?.save() }

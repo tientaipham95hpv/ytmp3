@@ -18,7 +18,7 @@ final class CloudSyncService: ObservableObject {
     private let defaults = UserDefaults.standard
     private let settingsKeys = [
         "defaultAudioQuality", "defaultVideoQuality", "appTheme", "accentChoice",
-        "appLanguage", "backendURL", "lyricsProviderURL", "search.recent.v1"
+        "appLanguage", "backendURL", "lyricsProviderURL", "search.recent.v1", "audioCrossfadeSeconds"
     ]
 
     var isEnabled: Bool { defaults.bool(forKey: "iCloudSyncEnabled") }
