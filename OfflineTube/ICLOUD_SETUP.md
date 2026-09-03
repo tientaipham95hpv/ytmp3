@@ -29,7 +29,8 @@ unavailable and leaves all local data untouched.
 
 - Media records use `sourceID` as their stable identity; playlist records use
   their UUID. This prevents duplicate metadata and playlists across pulls.
-- Latest metadata edit wins. Play count is merged using the maximum value and
+- On first contact for a media source, its existing cloud metadata becomes the
+  baseline; after that, latest metadata edit wins. Play count is merged using the maximum value and
   recently played keeps the latest date.
 - Playlist membership is stored by stable media `sourceID`, not a device-local
   file path. References resolve when that media exists on the current device.

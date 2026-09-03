@@ -79,13 +79,15 @@ final class CloudSyncService: ObservableObject {
         for item in media {
             if let record = remoteBySource.removeValue(forKey: item.sourceID) {
                 let remoteDate = record["modifiedAt"] as? Date ?? .distantPast
-                if remoteDate > item.syncModifiedAt {
+                if !item.hasCloudSyncBaseline || remoteDate > item.syncModifiedAt {
                     apply(record, to: item)
                 } else {
                     try await database.save(mediaRecord(item, existing: record))
+                    item.hasCloudSyncBaseline = true
                 }
             } else {
                 try await database.save(mediaRecord(item, existing: nil))
+                item.hasCloudSyncBaseline = true
             }
         }
         // Remote-only media remains in CloudKit. It is applied when that source is downloaded locally.
@@ -181,6 +183,7 @@ final class CloudSyncService: ObservableObject {
         item.lyricsText = record["lyricsText"] as? String
         item.lyricsFormat = record["lyricsFormat"] as? String
         item.syncModifiedAt = record["modifiedAt"] as? Date ?? Date()
+        item.hasCloudSyncBaseline = true
     }
 
     private func playlistRecord(_ playlist: MediaPlaylist, sourceByID: [UUID: String], existing: CKRecord?) -> CKRecord {
