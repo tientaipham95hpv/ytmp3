@@ -113,16 +113,30 @@ struct PlayerView: View {
     }
 
     private var secondaryControls: some View {
-        HStack {
-            Button { player.toggleShuffle() } label: { Image(systemName: "shuffle").foregroundStyle(player.isShuffling ? Color.accentColor : .primary) }.frame(maxWidth: .infinity)
-            Button { showAudioControls = true } label: {
-                VStack(spacing: 2) { Image(systemName: "slider.vertical.3"); Text("\(player.playbackSpeed, specifier: "%g")×").font(.caption2.bold()) }
-            }.frame(maxWidth: .infinity).accessibilityLabel("Audio Controls")
-            Button { sleepSheet = true } label: { Image(systemName: player.sleepTimerEnd == nil ? "moon.zzz" : "moon.zzz.fill") }.frame(maxWidth: .infinity)
-            Button { player.cycleRepeatMode() } label: {
-                Image(systemName: player.repeatMode.icon).foregroundStyle(player.repeatMode == .off ? .primary : Color.accentColor)
-            }.frame(maxWidth: .infinity)
-        }.font(.title3).buttonStyle(.plain).padding(.top, 4)
+        VStack(spacing: 12) {
+            HStack {
+                Button { player.toggleShuffle() } label: { Image(systemName: "shuffle").foregroundStyle(player.isShuffling ? Color.accentColor : .primary) }.frame(maxWidth: .infinity)
+                Button { showAudioControls = true } label: {
+                    VStack(spacing: 2) { Image(systemName: "slider.vertical.3"); Text("\(player.playbackSpeed, specifier: "%g")×").font(.caption2.bold()) }
+                }.frame(maxWidth: .infinity).accessibilityLabel("Audio Controls")
+                AirPlayRouteButton(isActive: player.isAirPlayActive)
+                    .frame(maxWidth: .infinity)
+                Button { sleepSheet = true } label: { Image(systemName: player.sleepTimerEnd == nil ? "moon.zzz" : "moon.zzz.fill") }.frame(maxWidth: .infinity)
+                Button { player.cycleRepeatMode() } label: {
+                    Image(systemName: player.repeatMode.icon).foregroundStyle(player.repeatMode == .off ? .primary : Color.accentColor)
+                }.frame(maxWidth: .infinity)
+            }
+            if player.isAirPlayActive {
+                Label(player.currentRouteName, systemImage: "airplayaudio")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tint)
+                    .lineLimit(1)
+                    .accessibilityLabel("Playing on \(player.currentRouteName)")
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .font(.title3).buttonStyle(.plain).padding(.top, 4)
+        .animation(.easeInOut(duration: 0.2), value: player.isAirPlayActive)
     }
 
     private var background: some View {
@@ -316,6 +330,25 @@ struct PlayerController: UIViewControllerRepresentable {
         return controller
     }
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) { controller.player = player }
+}
+
+private struct AirPlayRouteButton: UIViewRepresentable {
+    let isActive: Bool
+
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let picker = AVRoutePickerView()
+        picker.prioritizesVideoDevices = true
+        picker.tintColor = .label
+        picker.activeTintColor = .systemBlue
+        picker.accessibilityLabel = String(localized: "AirPlay")
+        picker.accessibilityHint = String(localized: "Choose an AirPlay device")
+        return picker
+    }
+
+    func updateUIView(_ picker: AVRoutePickerView, context: Context) {
+        picker.tintColor = isActive ? .systemBlue : .label
+        picker.activeTintColor = .systemBlue
+    }
 }
 
 private struct SleepTimerSheet: View {

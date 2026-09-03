@@ -26,10 +26,14 @@ final class PlayerManager: ObservableObject {
     @Published var repeatMode: RepeatMode = .off
     @Published var playbackSpeed: Float = 1
     @Published private(set) var sleepTimerEnd: Date?
+    @Published private(set) var currentRouteName = "iPhone"
+    @Published private(set) var isAirPlayActive = false
 
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var sleepTask: Task<Void, Never>?
+    private var externalPlaybackObserver: AnyCancellable?
+    private var routeChangeObserver: NSObjectProtocol?
     private var modelContext: ModelContext?
     private var lastSavedSecond = -1
     private var lastNowPlayingSecond = -1
@@ -45,15 +49,24 @@ final class PlayerManager: ObservableObject {
     }
 
     private init() {
+        player.allowsExternalPlayback = true
+        player.usesExternalPlaybackWhileExternalScreenIsActive = true
         configureAudioSession()
         configureRemoteCommands()
         observeAudioSession()
+        externalPlaybackObserver = player.publisher(for: \.isExternalPlaybackActive)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                Task { @MainActor in self?.updateCurrentRoute() }
+            }
+        updateCurrentRoute()
         observeTime()
     }
 
     deinit {
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let routeChangeObserver { NotificationCenter.default.removeObserver(routeChangeObserver) }
         sleepTask?.cancel()
     }
 
@@ -257,7 +270,7 @@ final class PlayerManager: ObservableObject {
 
     private func configureAudioSession() {
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {
             print("Audio session setup failed: \(error.localizedDescription)")
@@ -372,6 +385,25 @@ final class PlayerManager: ObservableObject {
                         AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume) { self.resume() }
             }
         }
+        routeChangeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateCurrentRoute()
+                self?.updateNowPlaying()
+            }
+        }
+    }
+
+    private func updateCurrentRoute() {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let airPlayOutput = outputs.first { $0.portType == .airPlay }
+        isAirPlayActive = airPlayOutput != nil || player.isExternalPlaybackActive
+        currentRouteName = airPlayOutput?.portName
+            ?? outputs.first?.portName
+            ?? String(localized: "On This iPhone")
     }
 
     private func updateNowPlaying() {
