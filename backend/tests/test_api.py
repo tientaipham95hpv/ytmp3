@@ -43,6 +43,46 @@ def test_health():
     assert payload["free_bytes"] >= 0
 
 
+def test_lyrics_search_prefers_synced_lyrics(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def read(self):
+            return json.dumps({
+                "syncedLyrics": "[00:01.00]Hello",
+                "plainLyrics": "Hello",
+                "trackName": "Song",
+                "artistName": "Artist",
+            }).encode()
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda request, timeout: Response())
+    response = client.post("/api/lyrics/search", json={"title": "Song", "artist": "Artist", "duration": 123})
+    assert response.status_code == 200
+    assert response.json()["syncedLyrics"] == "[00:01.00]Hello"
+    assert response.json()["source"] == "LRCLIB"
+
+
+def test_lyrics_search_rejects_empty_upstream_result(monkeypatch):
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def read(self):
+            return b'{"syncedLyrics": null, "plainLyrics": ""}'
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", lambda request, timeout: Response())
+    response = client.post("/api/lyrics/search", json={"title": "Unknown", "artist": "Unknown"})
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "not_found"
+
+
 def test_job_queue_summary():
     job_id = "b" * 32
     main.jobs[job_id] = {

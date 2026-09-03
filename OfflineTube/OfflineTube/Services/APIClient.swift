@@ -40,6 +40,12 @@ struct JobCreated: Codable, Sendable {
 
 struct ServerMessage: Codable, Sendable { let status: String; let message: String? }
 
+struct LyricsResult: Codable, Sendable {
+    let syncedLyrics: String?
+    let plainLyrics: String?
+    let source: String
+}
+
 private struct DeviceRegistration: Codable, Sendable {
     let accessToken: String
     let tokenType: String
@@ -242,6 +248,14 @@ actor APIClient {
 
     func playlistInfo(url: String) async throws -> PlaylistInfo {
         try await request("api/media/playlist", body: ["url": url])
+    }
+
+    func lyrics(title: String, artist: String, duration: Double) async throws -> LyricsResult {
+        struct Body: Encodable { let title: String; let artist: String; let duration: Double? }
+        return try await request(
+            "api/lyrics/search",
+            body: Body(title: title, artist: artist, duration: duration > 0 ? duration : nil)
+        )
     }
 
     func createDownload(url: String, mediaType: String, quality: String) async throws -> JobCreated {

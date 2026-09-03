@@ -38,11 +38,15 @@ enum LRCParser {
 actor LyricsService {
     static let shared = LyricsService()
 
-    func fetch(title: String, channel: String) async throws -> String {
+    func fetch(title: String, channel: String, duration: Double) async throws -> String {
         let configured = UserDefaults.standard.string(forKey: "lyricsProviderURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !configured.isEmpty, var components = URLComponents(string: configured) else {
-            throw APIError.server("Configure a Lyrics Provider URL in Settings first.")
+        if configured.isEmpty {
+            let result = try await APIClient.shared.lyrics(title: title, artist: channel, duration: duration)
+            if let lyrics = result.syncedLyrics?.trimmingCharacters(in: .whitespacesAndNewlines), !lyrics.isEmpty { return lyrics }
+            if let lyrics = result.plainLyrics?.trimmingCharacters(in: .whitespacesAndNewlines), !lyrics.isEmpty { return lyrics }
+            throw APIError.server("Không tìm thấy lời cho bài hát này.")
         }
+        guard var components = URLComponents(string: configured) else { throw APIError.invalidServerURL }
         var query = components.queryItems ?? []
         query.append(URLQueryItem(name: "title", value: title))
         query.append(URLQueryItem(name: "artist", value: channel))

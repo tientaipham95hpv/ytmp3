@@ -50,12 +50,12 @@ struct SettingsView: View {
                 Text("The current download service is preserved. Change this only when using another server.").font(.footnote).foregroundStyle(.secondary)
             }
             Section("Lyrics Provider") {
-                TextField("Provider API URL", text: $lyricsProviderURL)
+                TextField("Custom provider API URL (optional)", text: $lyricsProviderURL)
                     .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                 SecureField("API key (optional)", text: $lyricsAPIKey)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                 Button("Save Lyrics API Key") { saveLyricsKey() }
-                Text("Online search stays disabled until a provider URL is configured. The optional API key is stored in Keychain and never hardcoded in the app.")
+                Text("Find Lyrics uses LRCLIB through the app backend by default. Set a custom provider URL only to override it. The optional API key is stored in Keychain.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             if KeychainStore.adminToken() != nil || !accessToken.isEmpty {

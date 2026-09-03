@@ -6,7 +6,6 @@ struct LyricsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
     @Bindable var item: MediaItem
-    @AppStorage("lyricsProviderURL") private var providerURL = ""
     @State private var showImporter = false
     @State private var showPaste = false
     @State private var isSearching = false
@@ -24,9 +23,8 @@ struct LyricsView: View {
                 Menu {
                     Button { showImporter = true } label: { Label("Import .lrc from Files", systemImage: "folder") }
                     Button { showPaste = true } label: { Label("Paste Lyrics", systemImage: "doc.on.clipboard") }
-                    if !providerURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Button { search() } label: { Label("Find Lyrics", systemImage: "magnifyingglass") }
-                    }
+                    Button { search() } label: { Label("Find Lyrics", systemImage: "magnifyingglass") }
+                        .disabled(isSearching)
                     if item.lyricsText != nil {
                         Button(role: .destructive) { save(nil) } label: { Label("Remove Lyrics", systemImage: "trash") }
                     }
@@ -36,7 +34,7 @@ struct LyricsView: View {
             if let value = item.lyricsText, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 if lines.isEmpty { plainLyrics(value) } else { timedLyrics(lines) }
             } else {
-                AppStateView(title: "No Lyrics", message: "Import an LRC file, paste lyrics, or configure a provider in Settings.", icon: "quote.bubble", actionTitle: "Paste Lyrics") { showPaste = true }
+                AppStateView(title: "No Lyrics", message: "Find lyrics online with LRCLIB, import an LRC file, or paste lyrics.", icon: "quote.bubble", actionTitle: "Find Lyrics") { search() }
             }
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -96,7 +94,7 @@ struct LyricsView: View {
         isSearching = true; errorMessage = nil
         Task {
             defer { isSearching = false }
-            do { save(try await LyricsService.shared.fetch(title: item.title, channel: item.channel)); Haptics.success() }
+            do { save(try await LyricsService.shared.fetch(title: item.title, channel: item.channel, duration: item.duration)); Haptics.success() }
             catch { errorMessage = error.localizedDescription }
         }
     }

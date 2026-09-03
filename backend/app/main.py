@@ -20,7 +20,9 @@ from collections import defaultdict, deque
 from pathlib import Path
 from threading import Lock
 from typing import Literal
-from urllib.parse import urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import urlencode, urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -53,6 +55,8 @@ DEVICE_DAILY_JOB_LIMIT = max(1, int(os.getenv("DEVICE_DAILY_JOB_LIMIT", "25")))
 DEVICE_REQUESTS_PER_MINUTE = max(10, int(os.getenv("DEVICE_REQUESTS_PER_MINUTE", "120")))
 DEVICE_MAX_ACTIVE_JOBS = max(1, int(os.getenv("DEVICE_MAX_ACTIVE_JOBS", "2")))
 REGISTRATIONS_PER_IP_HOUR = max(1, int(os.getenv("REGISTRATIONS_PER_IP_HOUR", "5")))
+LRCLIB_BASE_URL = os.getenv("LRCLIB_BASE_URL", "https://lrclib.net").rstrip("/")
+LYRICS_TIMEOUT_SECONDS = max(3, min(30, int(os.getenv("LYRICS_TIMEOUT_SECONDS", "12"))))
 logger = logging.getLogger("offlinetube.downloads")
 download_slots = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 cleanup_task: asyncio.Task | None = None
@@ -124,6 +128,20 @@ class CookieUpdateRequest(BaseModel):
 class DeviceRegistrationRequest(BaseModel):
     install_id: str = Field(min_length=32, max_length=64, pattern=r"^[A-Za-z0-9-]+$")
     app_version: str = Field(default="unknown", min_length=1, max_length=32)
+
+
+class LyricsRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    artist: str = Field(min_length=1, max_length=300)
+    duration: float | None = Field(default=None, ge=1, le=3600)
+
+    @field_validator("title", "artist")
+    @classmethod
+    def clean_lyrics_text(cls, value: str) -> str:
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            raise ValueError("Title and artist are required")
+        return cleaned
 
 
 def _token_hash(value: str) -> str:
@@ -323,6 +341,45 @@ def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)
 
 
+def fetch_lrclib(payload: LyricsRequest) -> dict:
+    query: dict[str, str] = {"track_name": payload.title, "artist_name": payload.artist}
+    if payload.duration is not None:
+        query["duration"] = str(round(payload.duration))
+    url = f"{LRCLIB_BASE_URL}/api/get?{urlencode(query)}"
+    request = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "OfflineTube/1.0 (lyrics lookup)"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=LYRICS_TIMEOUT_SECONDS) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise HTTPException(status_code=404, detail="Không tìm thấy lời cho bài hát này.") from exc
+        if exc.code == 429:
+            raise HTTPException(status_code=429, detail="Dịch vụ lời bài hát đang giới hạn yêu cầu. Vui lòng thử lại sau.") from exc
+        raise HTTPException(status_code=502, detail="Dịch vụ lời bài hát tạm thời không khả dụng.") from exc
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail="Không thể kết nối dịch vụ lời bài hát.") from exc
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail="Dịch vụ lời bài hát trả dữ liệu không hợp lệ.")
+    synced = result.get("syncedLyrics")
+    plain = result.get("plainLyrics")
+    if not isinstance(synced, str) or not synced.strip():
+        synced = None
+    if not isinstance(plain, str) or not plain.strip():
+        plain = None
+    if synced is None and plain is None:
+        raise HTTPException(status_code=404, detail="Không tìm thấy lời cho bài hát này.")
+    return {
+        "syncedLyrics": synced,
+        "plainLyrics": plain,
+        "trackName": result.get("trackName"),
+        "artistName": result.get("artistName"),
+        "source": "LRCLIB",
+    }
+
+
 @app.get("/health")
 async def health() -> dict:
     with state_lock:
@@ -334,6 +391,11 @@ async def health() -> dict:
         "max_concurrent_downloads": MAX_CONCURRENT_DOWNLOADS,
         "free_bytes": shutil.disk_usage(DOWNLOAD_DIR).free,
     }
+
+
+@app.post("/api/lyrics/search")
+async def search_lyrics(payload: LyricsRequest) -> dict:
+    return await asyncio.to_thread(fetch_lrclib, payload)
 
 
 @app.get("/api/jobs")
