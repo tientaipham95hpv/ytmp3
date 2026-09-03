@@ -283,9 +283,10 @@ actor APIClient {
         return try decoder.decode(ServerMessage.self, from: data)
     }
 
-    func download(fileID: String, filename: String) async throws -> URL {
+    func download(fileID: String, filename: String, allowsCellular: Bool = true) async throws -> URL {
         try await ensureDeviceToken()
         var request = URLRequest(url: try endpoint("api/files/\(fileID)"))
+        request.allowsCellularAccess = allowsCellular
         authorize(&request)
         var (temporaryURL, response) = try await performDownload(for: request)
         if (response as? HTTPURLResponse)?.statusCode == 401 {

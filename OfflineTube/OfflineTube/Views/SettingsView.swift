@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
     @EnvironmentObject private var cloudSync: CloudSyncService
+    @EnvironmentObject private var downloads: DownloadViewModel
     @Query private var items: [MediaItem]
     @AppStorage("defaultAudioQuality") private var audioQuality = "original"
     @AppStorage("defaultVideoQuality") private var videoQuality = "720"
@@ -22,6 +23,12 @@ struct SettingsView: View {
     @State private var lyricsAPIKey = ""
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = false
     @AppStorage("audioCrossfadeSeconds") private var audioCrossfadeSeconds = 0
+    @AppStorage("maxConcurrentDownloads") private var maxConcurrentDownloads = 2
+    @AppStorage("downloadWiFiOnly") private var downloadWiFiOnly = false
+    @AppStorage("pauseDownloadsOnCellular") private var pauseDownloadsOnCellular = false
+    @AppStorage("preferredDownloadWindowEnabled") private var preferredWindowEnabled = false
+    @AppStorage("preferredDownloadStartHour") private var preferredStartHour = 22
+    @AppStorage("preferredDownloadEndHour") private var preferredEndHour = 7
 
     var body: some View {
         Form {
@@ -32,6 +39,18 @@ struct SettingsView: View {
                 Picker("Default video quality", selection: $videoQuality) {
                     Text("360p").tag("360"); Text("480p").tag("480"); Text("720p").tag("720"); Text("1080p").tag("1080"); Text("Best").tag("best")
                 }
+                Picker("Max concurrent downloads", selection: $maxConcurrentDownloads) {
+                    ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
+                }
+                Toggle("Wi‑Fi only for new downloads", isOn: $downloadWiFiOnly)
+                Toggle("Pause downloads on cellular", isOn: $pauseDownloadsOnCellular)
+                Toggle("Preferred download hours", isOn: $preferredWindowEnabled)
+                if preferredWindowEnabled {
+                    Picker("Start", selection: $preferredStartHour) { ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) } }
+                    Picker("End", selection: $preferredEndHour) { ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) } }
+                }
+                Text("Queued jobs persist after restart. iOS decides when suspended apps receive background execution time; schedules are preferences, not exact alarms.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Audio Playback") {
                 Picker("Crossfade", selection: $audioCrossfadeSeconds) {
@@ -112,6 +131,12 @@ struct SettingsView: View {
         .onChange(of: backendURL) { _, _ in cloudSync.settingsChanged() }
         .onChange(of: lyricsProviderURL) { _, _ in cloudSync.settingsChanged() }
         .onChange(of: audioCrossfadeSeconds) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: maxConcurrentDownloads) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
+        .onChange(of: downloadWiFiOnly) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
+        .onChange(of: pauseDownloadsOnCellular) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
+        .onChange(of: preferredWindowEnabled) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
+        .onChange(of: preferredStartHour) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
+        .onChange(of: preferredEndHour) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
         .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             updateCookies(from: url)

@@ -77,7 +77,8 @@ struct DownloadsView: View {
                 ArtworkView(url: item.info.thumbnail, isVideo: item.mediaType == "video").frame(width: 72, height: 50)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.info.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                    Label { Text(item.state.title) } icon: { Image(systemName: stateIcon(item.state)) }
+                    let waiting = downloads.waitingReason(for: item)
+                    Label { Text(waiting ?? item.state.rawValue.capitalized) } icon: { Image(systemName: waiting == nil ? stateIcon(item.state) : "clock.badge.exclamationmark.fill") }
                         .font(.caption).foregroundStyle(stateColor(item.state))
                 }
                 Spacer()
@@ -103,6 +104,9 @@ struct DownloadsView: View {
                 if item.state == .failed || item.state == .cancelled {
                     Button { downloads.retry(item.id) } label: { Label("Retry", systemImage: "arrow.clockwise") }
                 } else if item.state == .queued || item.state == .downloading || item.state == .saving {
+                    if item.state == .queued && downloads.waitingReason(for: item) != nil {
+                        Button { downloads.runNow(item.id) } label: { Label("Download Now", systemImage: "bolt.fill") }
+                    }
                     Button(role: .destructive) { cancel(item) } label: { Label("Cancel Download", systemImage: "xmark.circle") }
                 }
             }

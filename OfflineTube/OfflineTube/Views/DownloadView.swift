@@ -6,6 +6,10 @@ struct DownloadView: View {
     @EnvironmentObject private var player: PlayerManager
     @StateObject private var viewModel = DownloadViewModel()
     @FocusState private var isURLFieldFocused: Bool
+    @State private var showScheduler = false
+    @State private var scheduledAt = Date().addingTimeInterval(3600)
+    @State private var scheduledWiFiOnly = true
+    @State private var scheduledChargingOnly = false
 
     var body: some View {
         ScrollView {
@@ -66,6 +70,32 @@ struct DownloadView: View {
                 Text("“\(existing.title)” already exists (\(existing.quality), \(existing.fileSize.formattedBytes)). Replace deletes the selected existing copy only after the new download is saved.")
             }
         }
+        .sheet(isPresented: $showScheduler) {
+            NavigationStack {
+                Form {
+                    Section("Download Later") {
+                        DatePicker("Start after", selection: $scheduledAt, in: Date()...)
+                        Toggle("Wi‑Fi Only", isOn: $scheduledWiFiOnly)
+                        Toggle("Only When Charging", isOn: $scheduledChargingOnly)
+                    }
+                    Section {
+                        Text("iOS may suspend the app. The item remains queued and starts the next time the app gets execution time and all selected conditions are met.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .navigationTitle("Schedule Download").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showScheduler = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Add") {
+                            showScheduler = false
+                            Task { await viewModel.download(modelContext: modelContext, scheduledAt: scheduledAt,
+                                wifiOnly: scheduledWiFiOnly, chargingOnly: scheduledChargingOnly, ignoreWindow: false) }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func fetchInfo() {
@@ -95,18 +125,23 @@ struct DownloadView: View {
                 }
             }.pickerStyle(.menu)
 
-            Button {
-                isURLFieldFocused = false
-                Task { await viewModel.download(modelContext: modelContext) }
+            Menu {
+                Button { startDownload(ignoreWindow: true) } label: { Label("Download Now", systemImage: "bolt.fill") }
+                Button { startDownload(ignoreWindow: false) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
+                Button { scheduledAt = Date().addingTimeInterval(3600); showScheduler = true } label: { Label("Download Later", systemImage: "calendar.badge.clock") }
             } label: {
-                Label("Tải xuống", systemImage: viewModel.mediaKind == .audio ? "waveform" : "video")
-                    .frame(maxWidth: .infinity)
+                Label("Download Options", systemImage: viewModel.mediaKind == .audio ? "waveform" : "video").frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(viewModel.isDownloading)
         }
         .padding().background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func startDownload(ignoreWindow: Bool) {
+        isURLFieldFocused = false
+        Task { await viewModel.download(modelContext: modelContext, ignoreWindow: ignoreWindow) }
     }
 
     private func formatDuration(_ duration: Double) -> String {

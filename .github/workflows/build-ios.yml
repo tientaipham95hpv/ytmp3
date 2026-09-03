@@ -41,6 +41,14 @@ jobs:
             -o "$RUNNER_TEMP/duplicate-tests"
           "$RUNNER_TEMP/duplicate-tests"
 
+      - name: Test download scheduler policy
+        run: |
+          swiftc \
+            OfflineTube/OfflineTube/Services/DownloadSchedulerPolicy.swift \
+            OfflineTube/DownloadSchedulerTests/main.swift \
+            -o "$RUNNER_TEMP/scheduler-tests"
+          "$RUNNER_TEMP/scheduler-tests"
+
       - name: Test local search with 50k fake records
         run: |
           set -euo pipefail

@@ -35,10 +35,15 @@ struct DownloadQueueItem: Identifiable, Codable {
     var remainingSeconds: Double?
     var batchID: UUID?
     var replacementIDs: [UUID]
+    var scheduledAt: Date?
+    var wifiOnly: Bool
+    var chargingOnly: Bool
+    var ignorePreferredWindow: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, url, info, mediaType, quality, state, progress, downloadedBytes
         case totalBytes, speedBytesPerSecond, backendJobID, error, retryCount, remainingSeconds, batchID, replacementIDs
+        case scheduledAt, wifiOnly, chargingOnly, ignorePreferredWindow
     }
 
     init(
@@ -56,7 +61,11 @@ struct DownloadQueueItem: Identifiable, Codable {
         error: String? = nil,
         retryCount: Int = 0,
         batchID: UUID? = nil,
-        replacementIDs: [UUID] = []
+        replacementIDs: [UUID] = [],
+        scheduledAt: Date? = nil,
+        wifiOnly: Bool = false,
+        chargingOnly: Bool = false,
+        ignorePreferredWindow: Bool = false
     ) {
         self.id = id
         self.url = url
@@ -74,6 +83,10 @@ struct DownloadQueueItem: Identifiable, Codable {
         self.remainingSeconds = nil
         self.batchID = batchID
         self.replacementIDs = replacementIDs
+        self.scheduledAt = scheduledAt
+        self.wifiOnly = wifiOnly
+        self.chargingOnly = chargingOnly
+        self.ignorePreferredWindow = ignorePreferredWindow
     }
 
     init(from decoder: Decoder) throws {
@@ -94,6 +107,10 @@ struct DownloadQueueItem: Identifiable, Codable {
         remainingSeconds = try values.decodeIfPresent(Double.self, forKey: .remainingSeconds)
         batchID = try values.decodeIfPresent(UUID.self, forKey: .batchID)
         replacementIDs = try values.decodeIfPresent([UUID].self, forKey: .replacementIDs) ?? []
+        scheduledAt = try values.decodeIfPresent(Date.self, forKey: .scheduledAt)
+        wifiOnly = try values.decodeIfPresent(Bool.self, forKey: .wifiOnly) ?? false
+        chargingOnly = try values.decodeIfPresent(Bool.self, forKey: .chargingOnly) ?? false
+        ignorePreferredWindow = try values.decodeIfPresent(Bool.self, forKey: .ignorePreferredWindow) ?? false
     }
 }
 
@@ -134,12 +151,17 @@ final class DownloadViewModel: ObservableObject {
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
     private var workerTasks: [UUID: Task<Void, Never>] = [:]
-    private let maximumConcurrentDownloads = 2
+    private var maximumConcurrentDownloads: Int { min(4, max(1, UserDefaults.standard.integer(forKey: "maxConcurrentDownloads"))) }
     private var modelContext: ModelContext?
     private let logger = Logger(subsystem: "com.personal.OfflineTube", category: "Downloads")
     private var speedSamples: [UUID: [Double]] = [:]
+    private var schedulerObservers: [AnyCancellable] = []
+    private var schedulerTimer: AnyCancellable?
+    private var pendingSchedule: (date: Date?, wifiOnly: Bool?, chargingOnly: Bool, ignoreWindow: Bool)?
 
     init() {
+        if UserDefaults.standard.object(forKey: "maxConcurrentDownloads") == nil { UserDefaults.standard.set(2, forKey: "maxConcurrentDownloads") }
+        UIDevice.current.isBatteryMonitoringEnabled = true
         quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
         if let data = try? Data(contentsOf: queueFileURL),
            var saved = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) {
@@ -149,6 +171,12 @@ final class DownloadViewModel: ObservableObject {
             queueItems = saved
             activeBatchID = saved.reversed().compactMap(\.batchID).first
         }
+        schedulerObservers = [
+            NetworkMonitor.shared.$isConnected.sink { [weak self] _ in self?.startWorkersIfNeeded() },
+            NetworkMonitor.shared.$isWiFi.sink { [weak self] _ in self?.startWorkersIfNeeded() },
+            NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification).sink { [weak self] _ in self?.startWorkersIfNeeded() }
+        ]
+        schedulerTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect().sink { [weak self] _ in self?.startWorkersIfNeeded() }
     }
 
     func attach(modelContext: ModelContext) {
@@ -204,7 +232,8 @@ final class DownloadViewModel: ObservableObject {
                 let exactExists = existing.contains { $0.sourceID == info.id && $0.mediaType == mediaKind.rawValue && $0.quality == quality }
                 let exactQueued = queueItems.contains { $0.info.id == info.id && $0.mediaType == mediaKind.rawValue && $0.quality == quality && ![.failed, .cancelled].contains($0.state) }
                 if !downloadAgain && (exactExists || exactQueued) { continue }
-                queueItems.append(DownloadQueueItem(id: UUID(), url: info.webpageURL, info: info, mediaType: mediaKind.rawValue, quality: quality, batchID: batchID))
+                queueItems.append(DownloadQueueItem(id: UUID(), url: info.webpageURL, info: info, mediaType: mediaKind.rawValue, quality: quality,
+                    batchID: batchID, wifiOnly: UserDefaults.standard.bool(forKey: "downloadWiFiOnly")))
                 added += 1
             }
             guard added > 0 else {
@@ -231,7 +260,7 @@ final class DownloadViewModel: ObservableObject {
         return items.reduce(0) { $0 + ($1.state == .completed ? 1 : $1.progress) } / Double(items.count)
     }
 
-    private func enqueueDownload(modelContext: ModelContext, replacementIDs: [UUID] = []) {
+    private func enqueueDownload(modelContext: ModelContext, replacementIDs: [UUID] = [], scheduledAt: Date? = nil, wifiOnly: Bool? = nil, chargingOnly: Bool = false, ignoreWindow: Bool = false) {
         guard let info = mediaInfo else { return }
         self.modelContext = modelContext
         do {
@@ -248,14 +277,17 @@ final class DownloadViewModel: ObservableObject {
             logger.error("enqueue rejected source=\(info.id, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
             return
         }
-        queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality, replacementIDs: replacementIDs))
+        let requiresWiFi = wifiOnly ?? UserDefaults.standard.bool(forKey: "downloadWiFiOnly")
+        queueItems.append(DownloadQueueItem(id: UUID(), url: urlText, info: info, mediaType: mediaKind.rawValue, quality: quality,
+            replacementIDs: replacementIDs, scheduledAt: scheduledAt, wifiOnly: requiresWiFi, chargingOnly: chargingOnly))
+        if let index = queueItems.indices.last { queueItems[index].ignorePreferredWindow = ignoreWindow }
         logger.info("queued source=\(info.id, privacy: .public) type=\(self.mediaKind.rawValue, privacy: .public)")
         completedMessage = localized("Added “\(info.title)” to the queue.", "Đã thêm “\(info.title)” vào hàng đợi.")
         errorMessage = nil
         startWorkersIfNeeded()
     }
 
-    func download(modelContext: ModelContext) async {
+    func download(modelContext: ModelContext, scheduledAt: Date? = nil, wifiOnly: Bool? = nil, chargingOnly: Bool = false, ignoreWindow: Bool = true) async {
         guard let info = mediaInfo else { return }
         do {
             let items = try modelContext.fetch(FetchDescriptor<MediaItem>())
@@ -264,8 +296,9 @@ final class DownloadViewModel: ObservableObject {
                 fileSize: estimatedSize(for: info) ?? 0, fileHash: nil)
             let ids = Set(DuplicateDetector.matches(candidate, in: items.map { $0.duplicateDescriptor() }).map(\.id))
             duplicateMatches = items.filter { ids.contains($0.id) }
+            pendingSchedule = (scheduledAt, wifiOnly, chargingOnly, ignoreWindow)
             if !duplicateMatches.isEmpty { showDuplicateWarning = true; return }
-            enqueueDownload(modelContext: modelContext)
+            enqueueDownload(modelContext: modelContext, scheduledAt: scheduledAt, wifiOnly: wifiOnly, chargingOnly: chargingOnly, ignoreWindow: ignoreWindow)
         } catch { errorMessage = error.localizedDescription }
     }
 
@@ -275,13 +308,17 @@ final class DownloadViewModel: ObservableObject {
 
     func downloadAnyway(modelContext: ModelContext) {
         showDuplicateWarning = false
-        enqueueDownload(modelContext: modelContext)
+        let policy = pendingSchedule
+        enqueueDownload(modelContext: modelContext, scheduledAt: policy?.date, wifiOnly: policy?.wifiOnly,
+            chargingOnly: policy?.chargingOnly ?? false, ignoreWindow: policy?.ignoreWindow ?? true)
     }
 
     func replaceExisting(modelContext: ModelContext) {
         let ids = duplicateMatches.map(\.id)
         showDuplicateWarning = false
-        enqueueDownload(modelContext: modelContext, replacementIDs: ids)
+        let policy = pendingSchedule
+        enqueueDownload(modelContext: modelContext, replacementIDs: ids, scheduledAt: policy?.date, wifiOnly: policy?.wifiOnly,
+            chargingOnly: policy?.chargingOnly ?? false, ignoreWindow: policy?.ignoreWindow ?? true)
     }
 
     func cancel(_ id: UUID) {
@@ -296,9 +333,21 @@ final class DownloadViewModel: ObservableObject {
         if let active = queueItems.first(where: { $0.state == .downloading || $0.state == .queued }) { cancel(active.id) }
     }
 
+    func runNow(_ id: UUID) {
+        guard let index = queueItems.firstIndex(where: { $0.id == id && $0.state == .queued }) else { return }
+        queueItems[index].scheduledAt = nil
+        queueItems[index].chargingOnly = false
+        queueItems[index].wifiOnly = false
+        queueItems[index].ignorePreferredWindow = true
+        queueItems[index].error = nil
+        startWorkersIfNeeded()
+    }
+
     func retry(_ id: UUID) {
         guard let item = queueItems.first(where: { $0.id == id }) else { return }
-        var retry = DownloadQueueItem(id: UUID(), url: item.url, info: item.info, mediaType: item.mediaType, quality: item.quality, batchID: item.batchID)
+        var retry = DownloadQueueItem(id: UUID(), url: item.url, info: item.info, mediaType: item.mediaType, quality: item.quality,
+            batchID: item.batchID, scheduledAt: item.scheduledAt, wifiOnly: item.wifiOnly,
+            chargingOnly: item.chargingOnly, ignorePreferredWindow: item.ignorePreferredWindow)
         retry.state = .queued
         queueItems.append(retry)
         startWorkersIfNeeded()
@@ -317,7 +366,7 @@ final class DownloadViewModel: ObservableObject {
 
     private func startWorkersIfNeeded() {
         while workerTasks.count < maximumConcurrentDownloads,
-              queueItems.contains(where: { $0.state == .queued }) {
+              queueItems.contains(where: { $0.state == .queued && waitingReason(for: $0) == nil }) {
             let workerID = UUID()
             workerTasks[workerID] = Task { [weak self] in
                 await self?.processQueue()
@@ -328,7 +377,7 @@ final class DownloadViewModel: ObservableObject {
     }
 
     private func processQueue() async {
-        while let id = queueItems.first(where: { $0.state == .queued })?.id {
+        while let id = queueItems.first(where: { $0.state == .queued && waitingReason(for: $0) == nil })?.id {
             await processItem(id: id)
         }
         if !queueItems.contains(where: { $0.state == .downloading || $0.state == .saving }) {
@@ -353,6 +402,11 @@ final class DownloadViewModel: ObservableObject {
             }
             queueItems[createdIndex].backendJobID = created.id
             while let currentIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[currentIndex].state != .cancelled {
+                if let reason = waitingReason(for: queueItems[currentIndex]) {
+                    queueItems[currentIndex].state = .queued
+                    queueItems[currentIndex].error = reason
+                    return
+                }
                 let job = try await APIClient.shared.job(id: created.id)
                 guard let updateIndex = queueItems.firstIndex(where: { $0.id == id }) else { return }
                 queueItems[updateIndex].progress = min(1, max(0, job.progress / 100))
@@ -368,7 +422,7 @@ final class DownloadViewModel: ObservableObject {
                     guard let fileID = job.fileID, let filename = job.filename else { throw APIError.missingResult }
                     queueItems[updateIndex].state = .saving; statusText = localized("Saving to device…", "Đang lưu vào thiết bị…")
                     try FileStore.ensureCapacity(requiredBytes: job.totalBytes)
-                    let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename)
+                    let localURL = try await APIClient.shared.download(fileID: fileID, filename: filename, allowsCellular: !snapshot.wifiOnly)
                     guard let savingIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[savingIndex].state != .cancelled else {
                         try? FileManager.default.removeItem(at: localURL)
                         return
@@ -436,6 +490,32 @@ final class DownloadViewModel: ObservableObject {
     private func localized(_ english: String, _ vietnamese: String) -> String {
         UserDefaults.standard.string(forKey: "appLanguage") == AppLanguage.vietnamese.rawValue ? vietnamese : english
     }
+
+    func waitingReason(for item: DownloadQueueItem) -> String? {
+        guard item.state == .queued || item.state == .downloading else { return nil }
+        let network = NetworkMonitor.shared
+        let window: (Int, Int)? = UserDefaults.standard.bool(forKey: "preferredDownloadWindowEnabled")
+            ? (UserDefaults.standard.integer(forKey: "preferredDownloadStartHour"), UserDefaults.standard.integer(forKey: "preferredDownloadEndHour")) : nil
+        let conditions = DownloadScheduleConditions(isConnected: network.isConnected, isWiFi: network.isWiFi,
+            isCharging: Self.isCharging, wifiOnly: item.wifiOnly, chargingOnly: item.chargingOnly,
+            scheduledAt: item.scheduledAt, pauseOnCellular: UserDefaults.standard.bool(forKey: "pauseDownloadsOnCellular"),
+            preferredWindow: window, ignoresPreferredWindow: item.ignorePreferredWindow)
+        switch DownloadSchedulerPolicy.waitReason(conditions) {
+        case .network: return localized("Paused — waiting for network", "Đã tạm dừng — đang chờ mạng")
+        case .wifi: return localized("Waiting for Wi‑Fi", "Đang chờ Wi‑Fi")
+        case .charging: return localized("Waiting for charging", "Đang chờ sạc")
+        case .scheduled(let date):
+            return localized("Scheduled for \(date.formatted(date: .abbreviated, time: .shortened))", "Đã lên lịch \(date.formatted(date: .abbreviated, time: .shortened))")
+        case .preferredHours: return localized("Scheduled — waiting for preferred hours", "Đã lên lịch — chờ khung giờ ưu tiên")
+        case nil: return nil
+        }
+    }
+
+    private static var isCharging: Bool {
+        [.charging, .full].contains(UIDevice.current.batteryState)
+    }
+
+    func schedulerSettingsDidChange() { startWorkersIfNeeded() }
 
     private static func replacing(_ oldIDs: Set<UUID>, with newID: UUID, in values: [UUID]) -> [UUID] {
         var output: [UUID] = []

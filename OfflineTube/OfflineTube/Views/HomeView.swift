@@ -10,6 +10,10 @@ struct HomeView: View {
     @Query(sort: \MediaItem.createdAt, order: .reverse) private var items: [MediaItem]
     @FocusState private var isURLFocused: Bool
     @State private var showBatchDownload = false
+    @State private var showScheduler = false
+    @State private var scheduledAt = Date().addingTimeInterval(3600)
+    @State private var scheduledWiFiOnly = true
+    @State private var scheduledChargingOnly = false
 
     private var recentlyPlayed: [MediaItem] {
         items.filter { $0.lastPlayedAt != nil }.sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
@@ -52,6 +56,17 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showBatchDownload) { BatchDownloadView() }
+        .sheet(isPresented: $showScheduler) { schedulerSheet }
+        .confirmationDialog("Possible duplicate found", isPresented: $downloads.showDuplicateWarning, titleVisibility: .visible) {
+            if let existing = downloads.duplicateMatches.first { Button("Play Existing") { player.play(existing) } }
+            Button("Download Anyway") { downloads.downloadAnyway(modelContext: modelContext) }
+            Button("Replace Existing", role: .destructive) { downloads.replaceExisting(modelContext: modelContext) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let existing = downloads.duplicateMatches.first {
+                Text("“\(existing.title)” is already in your Library. Replace removes it only after the new copy is saved.")
+            }
+        }
     }
 
     private var greeting: some View {
@@ -133,17 +148,46 @@ struct HomeView: View {
                 Label("Another version is in Library. You can download this variant.", systemImage: "square.stack.3d.up")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Button {
-                Haptics.tap()
-                downloads.startDownload(modelContext: modelContext)
+            Menu {
+                Button { schedule(ignoreWindow: true) } label: { Label("Download Now", systemImage: "bolt.fill") }
+                Button { schedule(ignoreWindow: false) } label: { Label("Add to Queue", systemImage: "text.badge.plus") }
+                Button { scheduledAt = Date().addingTimeInterval(3600); showScheduler = true } label: { Label("Download Later", systemImage: "calendar.badge.clock") }
             } label: {
-                Label(downloads.isDownloading ? downloads.statusText : "Download", systemImage: downloads.mediaKind == .audio ? "waveform" : "video.fill")
+                Label(downloads.isDownloading ? downloads.statusText : "Download Options", systemImage: downloads.mediaKind == .audio ? "waveform" : "video.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).controlSize(.large)
             .disabled(downloads.variantExists(in: items, info: info))
         }
         .padding(16).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24))
+    }
+
+    private var schedulerSheet: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Start after", selection: $scheduledAt, in: Date()...)
+                Toggle("Wi‑Fi Only", isOn: $scheduledWiFiOnly)
+                Toggle("Only When Charging", isOn: $scheduledChargingOnly)
+                Text("The download stays queued until iOS gives the app execution time and all selected conditions are met.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            .navigationTitle("Download Later").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showScheduler = false } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        showScheduler = false
+                        Task { await downloads.download(modelContext: modelContext, scheduledAt: scheduledAt,
+                            wifiOnly: scheduledWiFiOnly, chargingOnly: scheduledChargingOnly, ignoreWindow: false) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func schedule(ignoreWindow: Bool) {
+        Haptics.tap()
+        Task { await downloads.download(modelContext: modelContext, ignoreWindow: ignoreWindow) }
     }
 
     @ViewBuilder private func mediaSection(_ title: String, items: [MediaItem]) -> some View {
