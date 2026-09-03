@@ -82,8 +82,10 @@ struct MetadataEditorView: View {
     }
 
     private var notesSection: some View {
-        Section("Notes") {
+        Section {
             TextEditor(text: $notes).frame(minHeight: 110)
+        } header: {
+            Text("Notes")
         } footer: {
             Text("Changes apply only to your local Library and never modify the online source.")
         }
@@ -232,13 +234,15 @@ struct BatchMetadataEditorView: View {
     }
 
     private var changesSection: some View {
-        Section("Batch Changes") {
+        Section {
             Toggle("Replace Artist / Channel", isOn: $replaceArtist)
             if replaceArtist { TextField("Artist / Channel", text: $artist) }
             Toggle("Replace Notes", isOn: $replaceNotes)
             if replaceNotes { TextEditor(text: $notes).frame(minHeight: 80) }
             Toggle("Replace Artwork", isOn: $replaceArtwork)
             if replaceArtwork { artworkChanges }
+        } header: {
+            Text("Batch Changes")
         } footer: {
             Text("Batch title editing is intentionally unavailable because each media item needs its own title.")
         }
