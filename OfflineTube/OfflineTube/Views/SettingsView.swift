@@ -31,27 +31,48 @@ struct SettingsView: View {
     @AppStorage("preferredDownloadEndHour") private var preferredEndHour = 7
 
     var body: some View {
-        Form {
-            Section("Downloads") {
-                Picker("Default audio quality", selection: $audioQuality) {
-                    Text("Original / M4A").tag("original"); Text("MP3 128").tag("128"); Text("MP3 192").tag("192"); Text("MP3 320").tag("320")
-                }
-                Picker("Default video quality", selection: $videoQuality) {
-                    Text("360p").tag("360"); Text("480p").tag("480"); Text("720p").tag("720"); Text("1080p").tag("1080"); Text("Best").tag("best")
-                }
-                Picker("Max concurrent downloads", selection: $maxConcurrentDownloads) {
-                    ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
-                }
-                Toggle("Wi‑Fi only for new downloads", isOn: $downloadWiFiOnly)
-                Toggle("Pause downloads on cellular", isOn: $pauseDownloadsOnCellular)
-                Toggle("Preferred download hours", isOn: $preferredWindowEnabled)
-                if preferredWindowEnabled {
-                    Picker("Start", selection: $preferredStartHour) { ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) } }
-                    Picker("End", selection: $preferredEndHour) { ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) } }
-                }
-                Text("Queued jobs persist after restart. iOS decides when suspended apps receive background execution time; schedules are preferences, not exact alarms.")
-                    .font(.footnote).foregroundStyle(.secondary)
+        presentedSettings
+            .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
+                guard case .success(let urls) = result, let url = urls.first else { return }
+                updateCookies(from: url)
             }
+            .sheet(isPresented: $showCookieGuide) {
+                CookieGuideView {
+                    showCookieGuide = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showCookieImporter = true }
+                }
+            }
+            .alert("OfflineTube", isPresented: Binding(get: { resultMessage != nil }, set: { if !$0 { resultMessage = nil } })) { Button("OK") { resultMessage = nil } } message: { Text(resultMessage ?? "") }
+    }
+
+    private var presentedSettings: some View {
+        observedSettings
+            .onChange(of: maxConcurrentDownloads) { _, _ in schedulerSettingsChanged() }
+            .onChange(of: downloadWiFiOnly) { _, _ in schedulerSettingsChanged() }
+            .onChange(of: pauseDownloadsOnCellular) { _, _ in schedulerSettingsChanged() }
+            .onChange(of: preferredWindowEnabled) { _, _ in schedulerSettingsChanged() }
+            .onChange(of: preferredStartHour) { _, _ in schedulerSettingsChanged() }
+            .onChange(of: preferredEndHour) { _, _ in schedulerSettingsChanged() }
+    }
+
+    private var observedSettings: some View {
+        settingsForm
+            .navigationTitle("Settings")
+            .task { accessToken = KeychainStore.adminToken() ?? ""; lyricsAPIKey = KeychainStore.lyricsAPIKey() ?? "" }
+            .onChange(of: iCloudSyncEnabled) { _, enabled in Task { await cloudSync.setEnabled(enabled) } }
+            .onChange(of: audioQuality) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: videoQuality) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: theme) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: accent) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: language) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: backendURL) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: lyricsProviderURL) { _, _ in cloudSync.settingsChanged() }
+            .onChange(of: audioCrossfadeSeconds) { _, _ in cloudSync.settingsChanged() }
+    }
+
+    private var settingsForm: some View {
+        Form {
+            downloadsSection
             Section("Audio Playback") {
                 Picker("Crossfade", selection: $audioCrossfadeSeconds) {
                     Text("Off").tag(0)
@@ -120,34 +141,34 @@ struct SettingsView: View {
             }
             Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
         }
-        .navigationTitle("Settings")
-        .task { accessToken = KeychainStore.adminToken() ?? ""; lyricsAPIKey = KeychainStore.lyricsAPIKey() ?? "" }
-        .onChange(of: iCloudSyncEnabled) { _, enabled in Task { await cloudSync.setEnabled(enabled) } }
-        .onChange(of: audioQuality) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: videoQuality) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: theme) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: accent) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: language) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: backendURL) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: lyricsProviderURL) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: audioCrossfadeSeconds) { _, _ in cloudSync.settingsChanged() }
-        .onChange(of: maxConcurrentDownloads) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
-        .onChange(of: downloadWiFiOnly) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
-        .onChange(of: pauseDownloadsOnCellular) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
-        .onChange(of: preferredWindowEnabled) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
-        .onChange(of: preferredStartHour) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
-        .onChange(of: preferredEndHour) { _, _ in downloads.schedulerSettingsDidChange(); cloudSync.settingsChanged() }
-        .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
-            guard case .success(let urls) = result, let url = urls.first else { return }
-            updateCookies(from: url)
-        }
-        .sheet(isPresented: $showCookieGuide) {
-            CookieGuideView {
-                showCookieGuide = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showCookieImporter = true }
+    }
+
+    @ViewBuilder private var downloadsSection: some View {
+        Section("Downloads") {
+            Picker("Default audio quality", selection: $audioQuality) {
+                Text("Original / M4A").tag("original"); Text("MP3 128").tag("128"); Text("MP3 192").tag("192"); Text("MP3 320").tag("320")
             }
+            Picker("Default video quality", selection: $videoQuality) {
+                Text("360p").tag("360"); Text("480p").tag("480"); Text("720p").tag("720"); Text("1080p").tag("1080"); Text("Best").tag("best")
+            }
+            Picker("Max concurrent downloads", selection: $maxConcurrentDownloads) {
+                ForEach(1...4, id: \.self) { Text("\($0)").tag($0) }
+            }
+            Toggle("Wi‑Fi only for new downloads", isOn: $downloadWiFiOnly)
+            Toggle("Pause downloads on cellular", isOn: $pauseDownloadsOnCellular)
+            Toggle("Preferred download hours", isOn: $preferredWindowEnabled)
+            if preferredWindowEnabled {
+                Picker("Start", selection: $preferredStartHour) { ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) } }
+                Picker("End", selection: $preferredEndHour) { ForEach(0..<24, id: \.self) { Text(String(format: "%02d:00", $0)).tag($0) } }
+            }
+            Text("Queued jobs persist after restart. iOS decides when suspended apps receive background execution time; schedules are preferences, not exact alarms.")
+                .font(.footnote).foregroundStyle(.secondary)
         }
-        .alert("OfflineTube", isPresented: Binding(get: { resultMessage != nil }, set: { if !$0 { resultMessage = nil } })) { Button("OK") { resultMessage = nil } } message: { Text(resultMessage ?? "") }
+    }
+
+    private func schedulerSettingsChanged() {
+        downloads.schedulerSettingsDidChange()
+        cloudSync.settingsChanged()
     }
 
     private func localized(_ english: String, _ vietnamese: String) -> String { language == AppLanguage.vietnamese.rawValue ? vietnamese : english }
