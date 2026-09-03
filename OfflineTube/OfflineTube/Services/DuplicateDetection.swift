@@ -70,7 +70,9 @@ enum DuplicateDetector {
     }
 
     private static func sameSource(_ lhs: DuplicateDescriptor, _ rhs: DuplicateDescriptor) -> Bool {
-        (!lhs.sourceID.isEmpty && lhs.sourceID == rhs.sourceID) || canonicalURL(lhs.sourceURL) == canonicalURL(rhs.sourceURL)
+        if !lhs.sourceID.isEmpty && lhs.sourceID == rhs.sourceID { return true }
+        guard !lhs.sourceURL.isEmpty, !rhs.sourceURL.isEmpty else { return false }
+        return canonicalURL(lhs.sourceURL) == canonicalURL(rhs.sourceURL)
     }
 
     private static func sameMetadata(_ lhs: DuplicateDescriptor, _ rhs: DuplicateDescriptor) -> Bool {
