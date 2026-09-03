@@ -25,6 +25,7 @@ final class MediaItem {
     var lyricsFormat: String? = nil
     var lyricsUpdatedAt: Date? = nil
     var notes: String? = nil
+    var syncModifiedAt: Date = Date()
 
     init(sourceID: String, sourceURL: String, title: String, channel: String, thumbnailURL: String?, duration: Double, localFilename: String, mediaType: String, quality: String) {
         self.id = UUID()
@@ -50,6 +51,7 @@ final class MediaItem {
         self.lyricsFormat = nil
         self.lyricsUpdatedAt = nil
         self.notes = nil
+        self.syncModifiedAt = Date()
     }
 
     var localURL: URL {

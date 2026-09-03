@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
+    @EnvironmentObject private var cloudSync: CloudSyncService
     @Query private var items: [MediaItem]
     @AppStorage("defaultAudioQuality") private var audioQuality = "original"
     @AppStorage("defaultVideoQuality") private var videoQuality = "720"
@@ -19,6 +20,7 @@ struct SettingsView: View {
     @State private var isUpdatingCookies = false
     @State private var showCookieGuide = false
     @State private var lyricsAPIKey = ""
+    @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = false
 
     var body: some View {
         Form {
@@ -37,6 +39,18 @@ struct SettingsView: View {
                 NavigationLink { BackupRestoreView() } label: {
                     Label("Backup & Restore", systemImage: "externaldrive.badge.timemachine")
                 }
+            }
+            Section("iCloud Sync") {
+                Toggle("Enable iCloud Sync", isOn: $iCloudSyncEnabled)
+                HStack {
+                    Text(cloudSync.statusText).font(.footnote).foregroundStyle(.secondary)
+                    Spacer()
+                    if case .syncing = cloudSync.state { ProgressView().controlSize(.small) }
+                }
+                Button("Sync Now") { Task { await cloudSync.sync() } }
+                    .disabled(!iCloudSyncEnabled || cloudSync.state == .syncing)
+                Text("Syncs playlists, favorites, playback progress, play history, settings, and custom text metadata. Media and artwork files remain on this device.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("Appearance") {
                 Picker("Language", selection: $language) { ForEach(AppLanguage.allCases) { Text($0.title).tag($0.rawValue) } }
@@ -80,6 +94,14 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .task { accessToken = KeychainStore.adminToken() ?? ""; lyricsAPIKey = KeychainStore.lyricsAPIKey() ?? "" }
+        .onChange(of: iCloudSyncEnabled) { _, enabled in Task { await cloudSync.setEnabled(enabled) } }
+        .onChange(of: audioQuality) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: videoQuality) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: theme) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: accent) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: language) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: backendURL) { _, _ in cloudSync.settingsChanged() }
+        .onChange(of: lyricsProviderURL) { _, _ in cloudSync.settingsChanged() }
         .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             updateCookies(from: url)

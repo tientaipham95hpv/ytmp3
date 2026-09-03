@@ -180,6 +180,7 @@ struct SearchView: View {
             Button { player.playLater(item) } label: { Label("Play Later", systemImage: "text.append") }
             Button {
                 item.isFavorite.toggle()
+                CloudSyncService.markChanged(item)
                 try? modelContext.save()
                 scheduleSearch(immediate: true)
             } label: {
@@ -300,15 +301,18 @@ struct SearchView: View {
         recentSearches.insert(trimmed, at: 0)
         recentSearches = Array(recentSearches.prefix(10))
         UserDefaults.standard.set(recentSearches, forKey: "search.recent.v1")
+        CloudSyncService.shared.settingsChanged()
     }
 
     private func deleteRecentSearches(at offsets: IndexSet) {
         recentSearches.remove(atOffsets: offsets)
         UserDefaults.standard.set(recentSearches, forKey: "search.recent.v1")
+        CloudSyncService.shared.settingsChanged()
     }
 
     private func clearRecentSearches() {
         recentSearches = []
         UserDefaults.standard.removeObject(forKey: "search.recent.v1")
+        CloudSyncService.shared.settingsChanged()
     }
 }

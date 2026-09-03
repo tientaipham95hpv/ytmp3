@@ -83,6 +83,7 @@ final class PlayerManager: ObservableObject {
             currentItem = item
             item.lastPlayedAt = Date()
             item.playCount += 1
+            CloudSyncService.markChanged(item)
             saveContext()
             let playerItem = AVPlayerItem(url: item.localURL)
             playerItem.audioTimePitchAlgorithm = .spectral
@@ -321,6 +322,7 @@ final class PlayerManager: ObservableObject {
         let second = Int(currentTime)
         if second / 5 != lastSavedSecond / 5 {
             lastSavedSecond = second
+            if let currentItem { CloudSyncService.markChanged(currentItem) }
             saveContext()
         }
     }

@@ -148,6 +148,7 @@ struct MetadataEditorView: View {
                 item.channel = artist.trimmingCharacters(in: .whitespacesAndNewlines)
                 let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
                 item.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
+                CloudSyncService.markChanged(item)
                 try modelContext.save()
                 player.metadataDidChange(for: item)
                 Haptics.success()
@@ -312,6 +313,7 @@ struct BatchMetadataEditorView: View {
                             item.customArtworkFilename = filename
                         }
                     }
+                    CloudSyncService.markChanged(item)
                     player.metadataDidChange(for: item)
                 }
                 try modelContext.save()

@@ -198,6 +198,7 @@ enum BackupService {
         item.playbackPosition = source.playbackPosition; item.createdAt = source.createdAt
         item.isFavorite = source.isFavorite; item.lastPlayedAt = source.lastPlayedAt; item.playCount = source.playCount
         item.notes = source.notes; item.lyricsText = source.lyricsText; item.lyricsFormat = source.lyricsFormat; item.lyricsUpdatedAt = source.lyricsUpdatedAt
+        CloudSyncService.markChanged(item)
     }
 
     private static func restoreArtwork(_ filename: String?, itemID: UUID, package: URL) async throws -> String? {

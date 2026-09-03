@@ -104,6 +104,7 @@ struct LyricsView: View {
         item.lyricsText = cleaned?.isEmpty == false ? cleaned : nil
         item.lyricsFormat = item.lyricsText.map { LRCParser.isTimed($0) ? "lrc" : "plain" }
         item.lyricsUpdatedAt = item.lyricsText == nil ? nil : Date()
+        CloudSyncService.markChanged(item)
         try? modelContext.save()
         showPaste = false; errorMessage = nil
     }

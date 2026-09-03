@@ -101,7 +101,7 @@ struct LibraryView: View {
                 Button { player.play(item, queue: filteredItems) } label: { row(item) }
                     .buttonStyle(.plain).contextMenu { menu(item) }
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button { item.isFavorite.toggle(); save(); Haptics.selection() } label: {
+                        Button { item.isFavorite.toggle(); CloudSyncService.markChanged(item); save(); Haptics.selection() } label: {
                             Label {
                                 Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite"))
                             } icon: {
@@ -150,7 +150,7 @@ struct LibraryView: View {
         Button { player.playNext(item); Haptics.selection() } label: { Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward") }
         Button { player.playLater(item); Haptics.selection() } label: { Label("Play Later", systemImage: "text.append") }
         Divider()
-        Button { item.isFavorite.toggle(); save() } label: {
+        Button { item.isFavorite.toggle(); CloudSyncService.markChanged(item); save() } label: {
             Label { Text(LocalizedStringKey(item.isFavorite ? "Unfavorite" : "Favorite")) } icon: { Image(systemName: item.isFavorite ? "heart.slash" : "heart") }
         }
         Button { metadataTarget = item } label: { Label("Edit Metadata", systemImage: "pencil") }

@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var player: PlayerManager
+    @EnvironmentObject private var cloudSync: CloudSyncService
     @StateObject private var downloads = DownloadViewModel()
     @StateObject private var network = NetworkMonitor.shared
     @Query private var mediaItems: [MediaItem]
@@ -51,7 +52,9 @@ struct RootView: View {
             try? FileStore.cleanupTemporaryFiles()
             downloads.attach(modelContext: modelContext)
             player.attach(modelContext: modelContext)
+            cloudSync.attach(context: modelContext)
             reconcileOfflineLibrary()
+            await cloudSync.sync()
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if player.currentItem != nil && !showPlayer {
@@ -85,8 +88,16 @@ struct RootView: View {
         .animation(.snappy, value: downloads.completedMessage)
         .onChange(of: selectedTab) { _, _ in Haptics.selection() }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { reconcileOfflineLibrary() }
-            else if phase == .inactive || phase == .background { player.savePlaybackState() }
+            if phase == .active {
+                reconcileOfflineLibrary()
+                Task { await cloudSync.sync() }
+            } else if phase == .inactive || phase == .background {
+                player.savePlaybackState()
+                Task { await cloudSync.sync() }
+            }
+        }
+        .onChange(of: network.isConnected) { _, connected in
+            if connected { Task { await cloudSync.sync() } }
         }
     }
 
