@@ -33,6 +33,15 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "ipa_name=$IPA_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Test local search with 50k fake records
+        run: |
+          set -euo pipefail
+          xcrun swiftc \
+            OfflineTube/OfflineTube/Services/LocalSearchEngine.swift \
+            OfflineTube/SearchBenchmark/main.swift \
+            -o "$RUNNER_TEMP/search-benchmark"
+          "$RUNNER_TEMP/search-benchmark"
+
       - name: Build Release for iphoneos
         run: |
           set -euo pipefail

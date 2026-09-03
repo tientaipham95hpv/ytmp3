@@ -34,8 +34,9 @@ struct RootView: View {
                     ToolbarItem(placement: .topBarLeading) { NavigationLink { PlaylistsView() } label: { Image(systemName: "music.note.list") } }
                 }
             }.tabItem { Label("Library", systemImage: "square.stack.fill") }.tag(1)
-            NavigationStack { DownloadsView() }.tabItem { Label("Downloads", systemImage: "arrow.down.circle.fill") }.tag(2)
-            NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(3)
+            NavigationStack { SearchView() }.tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(2)
+            NavigationStack { DownloadsView() }.tabItem { Label("Downloads", systemImage: "arrow.down.circle.fill") }.tag(3)
+            NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(4)
         }
         }
         if showPlayer {

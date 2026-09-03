@@ -127,7 +127,7 @@ private struct SmartPlaylistDetail: View {
     }
 }
 
-private struct PlaylistDetailView: View {
+struct PlaylistDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var player: PlayerManager
     @Bindable var playlist: MediaPlaylist
