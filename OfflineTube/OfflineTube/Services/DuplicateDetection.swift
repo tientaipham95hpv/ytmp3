@@ -103,7 +103,6 @@ enum MediaFileHasher {
         }.value
     }
 }
-#endif
 
 extension MediaItem {
     func duplicateDescriptor(hash: String? = nil) -> DuplicateDescriptor {
@@ -111,3 +110,4 @@ extension MediaItem {
                             duration: duration, mediaType: mediaType, fileSize: fileSize > 0 ? fileSize : FileStore.fileSize(for: self), fileHash: hash)
     }
 }
+#endif
