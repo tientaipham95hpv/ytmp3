@@ -420,8 +420,19 @@ def _friendly_error(stderr: str) -> tuple[int, str]:
         return 413, "Media exceeds the configured maximum file size."
     if "duration_limit" in text or "longer than" in text and "seconds" in text:
         return 422, "Media exceeds the configured maximum duration."
+    cookie_expired_patterns = (
+        "cookies are no longer valid",
+        "cookie is no longer valid",
+        "cookies have expired",
+        "cookie has expired",
+        "expired cookies",
+    )
+    if any(pattern in text for pattern in cookie_expired_patterns):
+        return 403, "Cookie YouTube đã hết hạn hoặc không còn hợp lệ. Vui lòng cập nhật cookie trên máy chủ rồi thử lại."
     if "sign in to confirm you”re not a bot" in text or "not a bot" in text:
         return 403, "YouTube đang chặn (xác minh bạn không phải bot). Thử lại sau hoặc dùng video khác."
+    if "http error 403" in text or "403: forbidden" in text:
+        return 403, "YouTube từ chối luồng tải xuống (HTTP 403). Cookie hoặc PO Token có thể không còn hợp lệ; vui lòng cập nhật cấu hình xác thực trên máy chủ rồi thử lại."
     if "private video" in text or "private" in text and "video" in text:
         return 403, "Video riêng tư. Tài khoản cookie hiện tại không có quyền truy cập."
     if "members-only" in text or "join this channel" in text:

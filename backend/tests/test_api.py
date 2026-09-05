@@ -181,6 +181,37 @@ def test_download_error_is_friendly(monkeypatch):
     assert "YouTube đang chặn" in main.jobs["friendly"]["error"]
 
 
+def test_friendly_error_reports_expired_youtube_cookies():
+    status, message = main._friendly_error(
+        "ERROR: The provided YouTube account cookies are no longer valid. "
+        "They have likely been rotated in the browser as a security measure."
+    )
+    assert status == 403
+    assert message == "Cookie YouTube đã hết hạn hoặc không còn hợp lệ. Vui lòng cập nhật cookie trên máy chủ rồi thử lại."
+
+
+def test_download_error_reports_expired_youtube_cookies(monkeypatch):
+    request = main.DownloadRequest(url="https://youtu.be/abc", media_type="audio", quality="original")
+    monkeypatch.setattr(main, "require_binary", lambda _: None)
+    monkeypatch.setattr(main.subprocess, "Popen", lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("ERROR: The provided YouTube account cookies are no longer valid")
+    ))
+    main.jobs["expired-cookie"] = {}
+    main.execute_download("expired-cookie", request)
+    assert "Cookie YouTube đã hết hạn" in main.jobs["expired-cookie"]["error"]
+
+
+def test_friendly_error_reports_forbidden_download_stream():
+    status, message = main._friendly_error(
+        "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+    )
+    assert status == 403
+    assert message == (
+        "YouTube từ chối luồng tải xuống (HTTP 403). Cookie hoặc PO Token có thể không còn hợp lệ; "
+        "vui lòng cập nhật cấu hình xác thực trên máy chủ rồi thử lại."
+    )
+
+
 def test_cookie_file_is_used_when_present(tmp_path: Path, monkeypatch):
     cookie_file = tmp_path / "youtube-cookies.txt"
     cookie_file.write_text("# Netscape HTTP Cookie File\n")

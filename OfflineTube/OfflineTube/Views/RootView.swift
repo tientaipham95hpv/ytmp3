@@ -2,6 +2,29 @@ import SwiftUI
 import SwiftData
 
 struct RootView: View {
+    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
+    @AppStorage("appTheme") private var theme = AppTheme.system.rawValue
+    @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
+    @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
+
+    private var selectedTheme: AppTheme { AppTheme(rawValue: theme) ?? .system }
+    private var accentColor: Color { (AccentChoice(rawValue: accent) ?? .pink).color }
+
+    var body: some View {
+        Group {
+            if onboardingCompleted {
+                MainAppView()
+            } else {
+                OnboardingView()
+            }
+        }
+        .preferredColorScheme(selectedTheme.colorScheme)
+        .environment(\.locale, Locale(identifier: language))
+        .tint(accentColor)
+    }
+}
+
+private struct MainAppView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var player: PlayerManager
@@ -10,14 +33,8 @@ struct RootView: View {
     @StateObject private var network = NetworkMonitor.shared
     @Query private var mediaItems: [MediaItem]
     @Query private var playlists: [MediaPlaylist]
-    @AppStorage("appTheme") private var theme = AppTheme.system.rawValue
-    @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
-    @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
     @State private var selectedTab = 0
     @State private var showPlayer = false
-
-    private var selectedTheme: AppTheme { AppTheme(rawValue: theme) ?? .system }
-    private var accentColor: Color { (AccentChoice(rawValue: accent) ?? .pink).color }
 
     var body: some View {
         ZStack {
@@ -65,9 +82,6 @@ struct RootView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .preferredColorScheme(selectedTheme.colorScheme)
-        .environment(\.locale, Locale(identifier: language))
-        .tint(accentColor)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .animation(.snappy, value: player.currentItem?.id)

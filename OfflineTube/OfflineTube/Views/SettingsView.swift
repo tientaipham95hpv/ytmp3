@@ -29,12 +29,21 @@ struct SettingsView: View {
     @AppStorage("preferredDownloadWindowEnabled") private var preferredWindowEnabled = false
     @AppStorage("preferredDownloadStartHour") private var preferredStartHour = 22
     @AppStorage("preferredDownloadEndHour") private var preferredEndHour = 7
+    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
 
     var body: some View {
         presentedSettings
             .fileImporter(isPresented: $showCookieImporter, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
-                guard case .success(let urls) = result, let url = urls.first else { return }
-                updateCookies(from: url)
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else {
+                        resultMessage = localized("No cookie file was selected.", "Chưa chọn file cookie.")
+                        return
+                    }
+                    updateCookies(from: url)
+                case .failure(let error):
+                    resultMessage = error.localizedDescription
+                }
             }
             .sheet(isPresented: $showCookieGuide) {
                 CookieGuideView {
@@ -107,6 +116,12 @@ struct SettingsView: View {
                 Picker("Accent color", selection: $accent) {
                     ForEach(AccentChoice.allCases) { choice in Label(choice.title, systemImage: "circle.fill").foregroundStyle(choice.color).tag(choice.rawValue) }
                 }
+                Button {
+                    Haptics.tap()
+                    onboardingCompleted = false
+                } label: {
+                    Label("Show Onboarding Again", systemImage: "sparkles.rectangle.stack")
+                }
             }
             Section("Backend") {
                 TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
@@ -121,23 +136,23 @@ struct SettingsView: View {
                 Text("Find Lyrics uses LRCLIB through the app backend by default. Set a custom provider URL only to override it. The optional API key is stored in Keychain.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            if KeychainStore.adminToken() != nil || !accessToken.isEmpty {
-                Section("Server Administration") {
-                    SecureField("Administrator access token", text: $accessToken)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Save administrator token") { saveToken() }.disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button {
-                        showCookieImporter = true
-                    } label: {
-                        if isUpdatingCookies { HStack { ProgressView(); Text("Checking and updating cookies…") } }
-                        else { Label("Replace YouTube cookies", systemImage: "lock.doc") }
-                    }.disabled(KeychainStore.adminToken() == nil || isUpdatingCookies)
-                    Button { showCookieGuide = true } label: {
-                        Label("Get cookies on iPhone", systemImage: "iphone.and.arrow.forward")
-                    }
-                    Text("Downloads are authorized automatically per device. This administrator token is only needed to replace the server's YouTube cookie.")
-                        .font(.footnote).foregroundStyle(.secondary)
+            Section("Server Administration") {
+                SecureField("Administrator access token", text: $accessToken)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Save administrator token") { saveToken() }
+                    .disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button {
+                    showCookieImporter = true
+                } label: {
+                    if isUpdatingCookies { HStack { ProgressView(); Text("Checking and updating cookies…") } }
+                    else { Label("Replace YouTube cookies", systemImage: "lock.doc") }
                 }
+                .disabled(KeychainStore.adminToken() == nil || isUpdatingCookies)
+                Button { showCookieGuide = true } label: {
+                    Label("Get cookies on iPhone", systemImage: "iphone.and.arrow.forward")
+                }
+                Text("Downloads are authorized automatically per device. This administrator token is only needed to replace the server's YouTube cookie.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
             Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
         }
