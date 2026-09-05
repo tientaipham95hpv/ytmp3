@@ -14,7 +14,11 @@ final class CloudSyncService: ObservableObject {
     @Published private(set) var state: State = .disabled
     private weak var context: ModelContext?
     private var running = false
-    private let database = CKContainer.default().privateCloudDatabase
+    // Do not touch CloudKit during app launch. Unsigned/local builds do not have
+    // iCloud entitlements, and creating the default container too early can make
+    // the app terminate before the first screen is shown.
+    private lazy var container = CKContainer.default()
+    private lazy var database = container.privateCloudDatabase
     private let defaults = UserDefaults.standard
     private let settingsKeys = [
         "defaultAudioQuality", "defaultVideoQuality", "appTheme", "accentChoice",
@@ -23,7 +27,14 @@ final class CloudSyncService: ObservableObject {
         "preferredDownloadWindowEnabled", "preferredDownloadStartHour", "preferredDownloadEndHour"
     ]
 
+    #if OFFLINETUBE_UNSIGNED_BUILD
+    // The sideload/unsigned IPA has no provisioning entitlement for CloudKit.
+    // Keep this feature completely local even if an older install left the
+    // preference enabled.
+    var isEnabled: Bool { false }
+    #else
     var isEnabled: Bool { defaults.bool(forKey: "iCloudSyncEnabled") }
+    #endif
 
     var statusText: String {
         switch state {
@@ -41,8 +52,13 @@ final class CloudSyncService: ObservableObject {
     }
 
     func setEnabled(_ enabled: Bool) async {
+        #if OFFLINETUBE_UNSIGNED_BUILD
+        defaults.set(false, forKey: "iCloudSyncEnabled")
+        state = .unavailable("iCloud Sync is unavailable in the unsigned build. Local data is unchanged.")
+        #else
         defaults.set(enabled, forKey: "iCloudSyncEnabled")
         if enabled { await sync() } else { state = .disabled }
+        #endif
     }
 
     func sync() async {
@@ -54,7 +70,8 @@ final class CloudSyncService: ObservableObject {
         state = .syncing
         defer { running = false }
         do {
-            let account = try await CKContainer.default().accountStatus()
+            // The container is created only after the user explicitly enables sync.
+            let account = try await container.accountStatus()
             guard account == .available else {
                 state = .unavailable("iCloud is unavailable. Local data continues to work normally.")
                 return

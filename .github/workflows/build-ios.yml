@@ -118,6 +118,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=OFFLINETUBE_UNSIGNED_BUILD \
             clean build 2>&1 | tee "$BUILD_LOG"
           RESULT=${PIPESTATUS[0]}
           set -e
