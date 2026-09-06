@@ -1,10 +1,17 @@
 import SwiftUI
 
 struct OnboardingView: View {
-    @AppStorage("onboardingCompleted") private var onboardingCompleted = false
+    static let completedKey = "onboardingCompleted"
+
+    @AppStorage(completedKey) private var onboardingCompleted = false
     @State private var selectedPage = 0
 
+    private let onComplete: () -> Void
     private let pages = OnboardingPage.all
+
+    init(onComplete: @escaping () -> Void = {}) {
+        self.onComplete = onComplete
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -64,6 +71,7 @@ struct OnboardingView: View {
     private func completeOnboarding() {
         Haptics.success()
         onboardingCompleted = true
+        onComplete()
     }
 }
 
