@@ -9,6 +9,9 @@ struct PlayerView: View {
     @State private var showQueue = false
     @State private var selectedPage = 0
     @State private var showAudioControls = false
+    @State private var shareRequest: LocalMediaExportRequest?
+    @State private var fileExportRequest: LocalMediaExportRequest?
+    @State private var exportError: String?
     var onClose: (() -> Void)? = nil
 
     var body: some View {
@@ -51,19 +54,83 @@ struct PlayerView: View {
                     .accessibilityLabel("Close Player")
                 }
                 ToolbarItem(placement: .principal) { Text("Now Playing").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary) }
-                ToolbarItem(placement: .topBarTrailing) { Button { showQueue = true; Haptics.selection() } label: { Image(systemName: "text.line.first.and.arrowtriangle.forward") }.accessibilityLabel("Up Next") }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if let item = player.currentItem {
+                        Menu { exportMenu(for: item) } label: {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Export Media")
+                    }
+                    Button { showQueue = true; Haptics.selection() } label: {
+                        Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                    }
+                    .accessibilityLabel("Up Next")
+                }
             }
             .toolbarBackground(.hidden, for: .navigationBar)
         }
         .sheet(isPresented: $sleepSheet) { SleepTimerSheet() }
         .sheet(isPresented: $showQueue) { UpNextSheet() }
         .sheet(isPresented: $showAudioControls) { AudioControlsView() }
+        .sheet(item: $shareRequest) { request in
+            LocalFileShareSheet(request: request) { result in
+                shareRequest = nil
+                if case .failure(let error) = result {
+                    exportError = error.localizedDescription
+                }
+            }
+        }
+        .sheet(item: $fileExportRequest) { request in
+            LocalFileDocumentExporter(request: request) { fileExportRequest = nil }
+        }
+        .alert("Couldn’t Export File", isPresented: Binding(
+            get: { exportError != nil },
+            set: { if !$0 { exportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "Unknown error")
+        }
         .fullScreenCover(isPresented: $showVideoFullscreen) {
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
                 PlayerController(player: player.player).ignoresSafeArea()
                 Button { showVideoFullscreen = false } label: { Image(systemName: "xmark.circle.fill").font(.largeTitle).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.45)) }.padding()
             }.statusBarHidden()
+        }
+    }
+
+    @ViewBuilder private func exportMenu(for item: MediaItem) -> some View {
+        Button { beginExport(item, file: .media, share: true) } label: {
+            Label("Share File", systemImage: "square.and.arrow.up")
+        }
+        Button { beginExport(item, file: .media, share: false) } label: {
+            Label("Save/Export to Files", systemImage: "folder.badge.plus")
+        }
+        Divider()
+        Menu {
+            Button { beginExport(item, file: .artwork, share: true) } label: {
+                Label("Share Artwork", systemImage: "square.and.arrow.up")
+            }
+            Button { beginExport(item, file: .artwork, share: false) } label: {
+                Label("Save Artwork to Files", systemImage: "folder.badge.plus")
+            }
+        } label: {
+            Label("Artwork", systemImage: "photo")
+        }
+    }
+
+    private func beginExport(_ item: MediaItem, file: LocalMediaExportFile, share: Bool) {
+        do {
+            let request = try LocalMediaExport.request(for: item, file: file)
+            if share {
+                shareRequest = request
+            } else {
+                fileExportRequest = request
+            }
+        } catch {
+            exportError = error.localizedDescription
+            Haptics.warning()
         }
     }
 

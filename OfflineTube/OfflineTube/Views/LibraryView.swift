@@ -15,6 +15,7 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var gridMode = false
     @State private var errorMessage: String?
+    @State private var exportError: String?
     @State private var playlistTarget: MediaItem?
     @State private var metadataTarget: MediaItem?
     @State private var showBatchMetadataEditor = false
@@ -22,6 +23,8 @@ struct LibraryView: View {
     @State private var showFileImporter = false
     @State private var isImporting = false
     @State private var importProgress = ""
+    @State private var shareRequest: LocalMediaExportRequest?
+    @State private var fileExportRequest: LocalMediaExportRequest?
 
     private var filteredItems: [MediaItem] {
         var result = items.filter { item in
@@ -81,6 +84,17 @@ struct LibraryView: View {
         .sheet(item: $metadataTarget) { item in MetadataEditorView(item: item) }
         .sheet(isPresented: $showBatchMetadataEditor) { BatchMetadataEditorView(items: items.filter(\.isAvailableOffline)) }
         .sheet(isPresented: $showDuplicates) { DuplicatesView() }
+        .sheet(item: $shareRequest) { request in
+            LocalFileShareSheet(request: request) { result in
+                shareRequest = nil
+                if case .failure(let error) = result {
+                    exportError = error.localizedDescription
+                }
+            }
+        }
+        .sheet(item: $fileExportRequest) { request in
+            LocalFileDocumentExporter(request: request) { fileExportRequest = nil }
+        }
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: LocalMediaImporter.allowedTypes, allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): Task { await importFiles(urls) }
@@ -96,6 +110,9 @@ struct LibraryView: View {
         .alert("Couldn’t update Library", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
         } message: { Text(errorMessage ?? "Unknown error") }
+        .alert("Couldn’t Export File", isPresented: Binding(get: { exportError != nil }, set: { if !$0 { exportError = nil } })) {
+            Button("OK", role: .cancel) { exportError = nil }
+        } message: { Text(exportError ?? "Unknown error") }
     }
 
     private var emptyState: some View {
@@ -182,9 +199,39 @@ struct LibraryView: View {
         }
         Button { metadataTarget = item } label: { Label("Edit Metadata", systemImage: "pencil") }
         Button { playlistTarget = item } label: { Label("Add to Playlist", systemImage: "text.badge.plus") }
-        ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
+        Divider()
+        Button { beginExport(item, file: .media, share: true) } label: {
+            Label("Share File", systemImage: "square.and.arrow.up")
+        }
+        Button { beginExport(item, file: .media, share: false) } label: {
+            Label("Save/Export to Files", systemImage: "folder.badge.plus")
+        }
+        Menu {
+            Button { beginExport(item, file: .artwork, share: true) } label: {
+                Label("Share Artwork", systemImage: "square.and.arrow.up")
+            }
+            Button { beginExport(item, file: .artwork, share: false) } label: {
+                Label("Save Artwork to Files", systemImage: "folder.badge.plus")
+            }
+        } label: {
+            Label("Artwork", systemImage: "photo")
+        }
         Divider()
         Button(role: .destructive) { delete(item) } label: { Label("Delete Download", systemImage: "trash") }
+    }
+
+    private func beginExport(_ item: MediaItem, file: LocalMediaExportFile, share: Bool) {
+        do {
+            let request = try LocalMediaExport.request(for: item, file: file)
+            if share {
+                shareRequest = request
+            } else {
+                fileExportRequest = request
+            }
+        } catch {
+            exportError = error.localizedDescription
+            Haptics.warning()
+        }
     }
 
     private func size(_ item: MediaItem) -> Int64 { item.fileSize > 0 ? item.fileSize : FileStore.fileSize(for: item) }
