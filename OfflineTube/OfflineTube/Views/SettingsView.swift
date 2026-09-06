@@ -261,13 +261,15 @@ private struct StorageManagementView: View {
     @Query private var items: [MediaItem]
     @Query private var playlists: [MediaPlaylist]
     @State private var selection = Set<UUID>()
-    @State private var snapshot = FileStore.StorageSnapshot(total: 0, audio: 0, video: 0, artwork: 0, temporary: 0, available: nil)
+    @State private var snapshot = CacheStorageSnapshot.empty
+    @State private var scanReport: CacheScanReport?
+    @State private var cleanupPreview: CacheCleanupPreview?
     @State private var pendingDelete: [MediaItem] = []
     @State private var confirmDelete = false
     @State private var confirmDeleteAll = false
-    @State private var confirmClearArtwork = false
     @State private var resultMessage: String?
     @State private var editMode: EditMode = .inactive
+    @State private var isWorking = false
 
     private var sortedItems: [MediaItem] {
         items.sorted { FileStore.fileSize(for: $0) > FileStore.fileSize(for: $1) }
@@ -276,19 +278,67 @@ private struct StorageManagementView: View {
     var body: some View {
         List(selection: $selection) {
             Section("Storage Overview") {
-                storageRow("Total app storage", icon: "internaldrive.fill", value: snapshot.total)
-                storageRow("Audio", icon: "waveform", value: snapshot.audio)
-                storageRow("Video", icon: "video.fill", value: snapshot.video)
-                storageRow("Artwork / Cache", icon: "photo.fill", value: snapshot.artwork)
-                storageRow("Temporary / Other", icon: "clock.arrow.circlepath", value: snapshot.temporary)
+                storageRow("Media", icon: "play.rectangle.fill", value: snapshot.media)
+                storageRow("Artwork", icon: "photo.fill", value: snapshot.artwork)
+                storageRow("Temporary downloads", icon: "arrow.down.circle", value: snapshot.temporaryDownloads)
+                storageRow("Backend temporary metadata", icon: "server.rack", value: snapshot.backendMetadata)
+                storageRow("Waveform / cache", icon: "waveform.path", value: snapshot.waveform)
+                storageRow("Total managed storage", icon: "internaldrive.fill", value: snapshot.total)
                 if let available = snapshot.available {
                     storageRow("Available on device", icon: "iphone", value: available)
                 }
             }
 
             Section("Cleanup") {
-                Button { confirmClearArtwork = true } label: { Label("Clear artwork cache", systemImage: "photo.badge.minus") }
+                cleanupButton("Clear Artwork Cache", icon: "photo.badge.minus", scope: .artwork)
+                cleanupButton("Clear Temporary Files", icon: "clock.badge.xmark", scope: .temporary)
+                Button { scanForOrphans() } label: { Label("Clean Orphan Files", systemImage: "doc.badge.gearshape") }
+                Button { runScan() } label: { Label("Find Missing Files", systemImage: "magnifyingglass") }
+                if isWorking {
+                    HStack { ProgressView(); Text("Scanning storage…").foregroundStyle(.secondary) }
+                }
+                Text("Cleanup always shows a preview first. Valid media referenced by the Library is never removed automatically.")
+                    .font(.footnote).foregroundStyle(.secondary)
                 Button("Delete all downloads", role: .destructive) { confirmDeleteAll = true }
+            }
+
+            if let report = scanReport {
+                Section("Scanner Results") {
+                    scanSummary("Files without a SwiftData record", count: report.orphanFiles.count, icon: "doc.questionmark")
+                    scanSummary("SwiftData records with a missing file", count: report.missingMedia.count, icon: "exclamationmark.icloud")
+                    scanSummary("Duplicated local file groups", count: report.duplicateFiles.count, icon: "doc.on.doc")
+                    Text("Scanned \(report.scannedAt.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                if !report.orphanFiles.isEmpty {
+                    Section("Orphan Files") {
+                        ForEach(report.orphanFiles) { file in fileRow(file) }
+                    }
+                }
+
+                if !report.missingMedia.isEmpty {
+                    Section("Missing Files") {
+                        ForEach(report.missingMedia) { entry in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(entry.title).lineLimit(1)
+                                Text(entry.filename).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                    }
+                }
+
+                if !report.duplicateFiles.isEmpty {
+                    Section("Duplicated Local Files") {
+                        ForEach(report.duplicateFiles) { group in
+                            DisclosureGroup("\(group.files.count) copies • \(group.reclaimableSize.formattedBytes) reclaimable") {
+                                ForEach(group.files) { file in fileRow(file) }
+                            }
+                        }
+                        Text("Duplicates are reported only. Delete Library items manually so SwiftData and playlists remain consistent.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Media by Size") {
@@ -330,7 +380,10 @@ private struct StorageManagementView: View {
                 }
             }
         }
-        .task { cleanupTempAndRefresh() }
+        .task { await refresh() }
+        .sheet(item: $cleanupPreview) { preview in
+            CacheCleanupPreviewView(preview: preview) { clean(preview) }
+        }
         .confirmationDialog("Delete selected downloads?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete \(pendingDelete.count) Items", role: .destructive) { delete(pendingDelete) }
             Button("Cancel", role: .cancel) { pendingDelete = [] }
@@ -339,10 +392,6 @@ private struct StorageManagementView: View {
             Button("Delete All", role: .destructive) { delete(items) }
             Button("Cancel", role: .cancel) {}
         } message: { Text("This cannot be undone.") }
-        .confirmationDialog("Clear artwork cache?", isPresented: $confirmClearArtwork, titleVisibility: .visible) {
-            Button("Clear Cache", role: .destructive) { clearArtwork() }
-            Button("Cancel", role: .cancel) {}
-        } message: { Text("Artwork can be downloaded again when the device is online.") }
         .alert("OfflineTube", isPresented: Binding(get: { resultMessage != nil }, set: { if !$0 { resultMessage = nil } })) {
             Button("OK") { resultMessage = nil }
         } message: { Text(resultMessage ?? "") }
@@ -350,6 +399,88 @@ private struct StorageManagementView: View {
 
     private func storageRow(_ title: LocalizedStringKey, icon: String, value: Int64) -> some View {
         LabeledContent { Text(value.formattedBytes).monospacedDigit() } label: { Label(title, systemImage: icon) }
+    }
+
+    private func scanSummary(_ title: LocalizedStringKey, count: Int, icon: String) -> some View {
+        LabeledContent { Text("\(count)").monospacedDigit() } label: { Label(title, systemImage: icon) }
+    }
+
+    private func fileRow(_ file: CacheFileEntry) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack { Text(file.name).lineLimit(1); Spacer(); Text(file.size.formattedBytes).monospacedDigit() }
+            Text(file.category).font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func cleanupButton(_ title: LocalizedStringKey, icon: String, scope: CacheCleanupScope) -> some View {
+        Button { prepareCleanup(scope) } label: { Label(title, systemImage: icon) }
+    }
+
+    private func prepareCleanup(_ scope: CacheCleanupScope) {
+        let records = CacheManager.records(from: items)
+        isWorking = true
+        Task {
+            let preview = await Task.detached(priority: .utility) {
+                switch scope {
+                case .artwork: return CacheManager.previewArtworkCleanup(records: records)
+                case .temporary: return CacheManager.previewTemporaryCleanup(records: records)
+                case .orphan: return CacheCleanupPreview(scope: .orphan, files: [], includesURLCache: false, urlCacheBytes: 0)
+                }
+            }.value
+            isWorking = false
+            if preview.fileCount == 0 {
+                resultMessage = "Nothing to clean."
+            } else {
+                cleanupPreview = preview
+            }
+        }
+    }
+
+    private func runScan(showOrphanPreview: Bool = false) {
+        let records = CacheManager.records(from: items)
+        isWorking = true
+        Task {
+            let report = await CacheManager.scan(records: records)
+            scanReport = report
+            isWorking = false
+            if showOrphanPreview {
+                let preview = CacheManager.previewOrphanCleanup(from: report)
+                if preview.files.isEmpty { resultMessage = "No orphan files found." }
+                else { cleanupPreview = preview }
+            } else if report.isClean {
+                resultMessage = "No missing, orphaned, or duplicated local files found."
+            }
+        }
+    }
+
+    private func scanForOrphans() { runScan(showOrphanPreview: true) }
+
+    private func clean(_ preview: CacheCleanupPreview) {
+        cleanupPreview = nil
+        isWorking = true
+        Task {
+            do {
+                // Keep descriptor capture + deletion on MainActor so a download cannot
+                // insert a new SwiftData record between final validation and removal.
+                let currentRecords = CacheManager.records(from: items)
+                let result = try CacheManager.clean(preview, currentRecords: currentRecords)
+                if preview.scope == .artwork {
+                    let removed = Set(result.removedFiles.map(\.name))
+                    items.forEach { item in
+                        if let name = item.artworkFilename, removed.contains(name) { item.artworkFilename = nil }
+                    }
+                    try modelContext.save()
+                }
+                if preview.scope == .orphan { scanReport = nil }
+                await refresh()
+                resultMessage = "Removed \(result.removedCount) cache item(s), freeing \(result.removedSize.formattedBytes)."
+                Haptics.success()
+            } catch {
+                resultMessage = error.localizedDescription
+                await refresh()
+            }
+            isWorking = false
+        }
     }
 
     private func requestDelete(_ selected: [MediaItem]) {
@@ -375,31 +506,63 @@ private struct StorageManagementView: View {
             }
             deleted.forEach(modelContext.delete)
             try modelContext.save()
-            selection.subtract(ids); pendingDelete = []; editMode = .inactive
-            refresh(); Haptics.success()
+            selection.subtract(ids); pendingDelete = []; editMode = .inactive; scanReport = nil
+            Task { await refresh() }
+            Haptics.success()
             if let firstError { resultMessage = firstError.localizedDescription }
         } catch {
             resultMessage = error.localizedDescription
-            refresh()
+            Task { await refresh() }
         }
     }
 
-    private func clearArtwork() {
-        do {
-            try FileStore.clearArtworkCache(items: items)
-            try modelContext.save(); refresh(); Haptics.success()
-        } catch { resultMessage = error.localizedDescription }
+    private func refresh() async { snapshot = await CacheManager.storageSnapshot() }
+}
+
+private struct CacheCleanupPreviewView: View {
+    @Environment(\.dismiss) private var dismiss
+    let preview: CacheCleanupPreview
+    let confirm: () -> Void
+
+    private var title: String {
+        switch preview.scope {
+        case .artwork: return "Clear Artwork Cache"
+        case .temporary: return "Clear Temporary Files"
+        case .orphan: return "Clean Orphan Files"
+        }
     }
 
-    private func cleanupTempAndRefresh() {
-        do {
-            try FileStore.cleanupTemporaryFiles()
-            try FileStore.clearOrphanedFiles(keeping: items)
-        } catch { resultMessage = error.localizedDescription }
-        refresh()
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Cleanup Preview") {
+                    LabeledContent("Items", value: "\(preview.fileCount)")
+                    LabeledContent("Space to reclaim", value: preview.totalSize.formattedBytes)
+                    Text("Review this list before confirming. No Library media record is deleted by this cleanup.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Files") {
+                    ForEach(preview.files) { file in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack { Text(file.name).lineLimit(1); Spacer(); Text(file.size.formattedBytes).monospacedDigit() }
+                            Text(file.category).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    if preview.includesURLCache {
+                        HStack { Text("System URL cache"); Spacer(); Text(preview.urlCacheBytes.formattedBytes).monospacedDigit() }
+                    }
+                }
+            }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Clean", role: .destructive) { confirm() }
+                }
+            }
+        }
     }
-
-    private func refresh() { snapshot = FileStore.storageSnapshot(items: items) }
 }
 
 private struct CookieGuideView: View {

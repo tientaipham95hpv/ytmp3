@@ -119,41 +119,6 @@ enum FileStore {
                                temporary: max(0, total - audio - video - artwork), available: availableCapacity())
     }
 
-    static func clearArtworkCache(items: [MediaItem]) throws {
-        let urls = try FileManager.default.contentsOfDirectory(at: artworkDirectory, includingPropertiesForKeys: nil)
-        for url in urls { try FileManager.default.removeItem(at: url) }
-        items.forEach { $0.artworkFilename = nil; $0.customArtworkFilename = nil }
-    }
-
-    static func cleanupTemporaryFiles(olderThan age: TimeInterval = 3600) throws {
-        let cutoff = Date().addingTimeInterval(-age)
-        let urls = try FileManager.default.contentsOfDirectory(
-            at: downloadsDirectory,
-            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-            options: [.skipsSubdirectoryDescendants]
-        )
-        let temporaryExtensions = Set(["tmp", "temp", "part", "download"])
-        for url in urls where temporaryExtensions.contains(url.pathExtension.lowercased()) {
-            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
-            if values?.isRegularFile == true, (values?.contentModificationDate ?? .distantPast) < cutoff {
-                try FileManager.default.removeItem(at: url)
-            }
-        }
-    }
-
-    static func clearOrphanedFiles(keeping items: [MediaItem]) throws {
-        let filenames = Set(items.map(\.localFilename))
-        let urls = try FileManager.default.contentsOfDirectory(at: downloadsDirectory, includingPropertiesForKeys: nil)
-        for url in urls where !filenames.contains(url.lastPathComponent) {
-            try FileManager.default.removeItem(at: url)
-        }
-        let artworkFilenames = Set(items.flatMap { [$0.artworkFilename, $0.customArtworkFilename].compactMap { $0 } })
-        let artworkURLs = try FileManager.default.contentsOfDirectory(at: artworkDirectory, includingPropertiesForKeys: nil)
-        for url in artworkURLs where !artworkFilenames.contains(url.lastPathComponent) {
-            try FileManager.default.removeItem(at: url)
-        }
-    }
-
     private static func directorySize(_ directory: URL) -> Int64 {
         guard let enumerator = FileManager.default.enumerator(
             at: directory, includingPropertiesForKeys: [.isRegularFileKey, .fileAllocatedSizeKey, .fileSizeKey],

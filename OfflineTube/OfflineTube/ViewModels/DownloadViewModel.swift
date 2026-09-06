@@ -224,7 +224,7 @@ final class DownloadViewModel: ObservableObject {
         guard let batchInfo else { return 0 }
         self.modelContext = modelContext
         do {
-            try FileStore.cleanupTemporaryFiles(); try FileStore.ensureCapacity()
+            try FileStore.ensureCapacity()
             let existing = try modelContext.fetch(FetchDescriptor<MediaItem>())
             let batchID = UUID()
             var added = 0
@@ -264,7 +264,6 @@ final class DownloadViewModel: ObservableObject {
         guard let info = mediaInfo else { return }
         self.modelContext = modelContext
         do {
-            try FileStore.cleanupTemporaryFiles()
             try FileStore.ensureCapacity()
             let sourceID = info.id
             let exactQueued = queueItems.contains { $0.info.id == sourceID && $0.mediaType == self.mediaKind.rawValue && $0.quality == self.quality && $0.state != .failed && $0.state != .cancelled }
