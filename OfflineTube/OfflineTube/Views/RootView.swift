@@ -29,12 +29,14 @@ private struct MainAppView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var player: PlayerManager
     @EnvironmentObject private var cloudSync: CloudSyncService
+    @EnvironmentObject private var appLock: AppLockManager
     @StateObject private var downloads = DownloadViewModel()
     @StateObject private var network = NetworkMonitor.shared
     @Query private var mediaItems: [MediaItem]
     @Query private var playlists: [MediaPlaylist]
     @State private var selectedTab = 0
     @State private var showPlayer = false
+    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: OnboardingView.completedKey)
 
     var body: some View {
         ZStack {
@@ -61,6 +63,12 @@ private struct MainAppView: View {
             PlayerView(onClose: { withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) { showPlayer = false } })
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(10)
+        }
+        if appLock.isPrivacyShieldVisible || appLock.isLocked {
+            AppLockView(showsUnlockControls: appLock.isLocked && !appLock.isPrivacyShieldVisible)
+                .environmentObject(appLock)
+                .transition(.opacity)
+                .zIndex(100)
         }
         }
         .environmentObject(downloads)
@@ -100,12 +108,29 @@ private struct MainAppView: View {
             }
         }
         .animation(.snappy, value: downloads.completedMessage)
+        .animation(.easeInOut(duration: 0.15), value: appLock.isPrivacyShieldVisible)
+        .animation(.easeInOut(duration: 0.2), value: appLock.isLocked)
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView { showOnboarding = false }
+                .interactiveDismissDisabled()
+        }
         .onChange(of: selectedTab) { _, _ in Haptics.selection() }
+        .onAppear {
+            appLock.sceneDidBecomeActive()
+            if appLock.isLocked { appLock.unlock() }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                appLock.sceneDidBecomeActive()
+                if appLock.isLocked { appLock.unlock() }
                 reconcileOfflineLibrary()
                 Task { await cloudSync.sync() }
-            } else if phase == .inactive || phase == .background {
+            } else if phase == .inactive {
+                appLock.sceneDidBecomeInactive()
+                player.savePlaybackState()
+                Task { await cloudSync.sync() }
+            } else if phase == .background {
+                appLock.sceneDidEnterBackground()
                 player.savePlaybackState()
                 Task { await cloudSync.sync() }
             }

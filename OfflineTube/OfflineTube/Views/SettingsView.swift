@@ -7,6 +7,7 @@ struct SettingsView: View {
     @EnvironmentObject private var player: PlayerManager
     @EnvironmentObject private var cloudSync: CloudSyncService
     @EnvironmentObject private var downloads: DownloadViewModel
+    @EnvironmentObject private var appLock: AppLockManager
     @Query private var items: [MediaItem]
     @AppStorage("defaultAudioQuality") private var audioQuality = "original"
     @AppStorage("defaultVideoQuality") private var videoQuality = "720"
@@ -20,6 +21,7 @@ struct SettingsView: View {
     @State private var showCookieImporter = false
     @State private var isUpdatingCookies = false
     @State private var showCookieGuide = false
+    @State private var showOnboarding = false
     @State private var lyricsAPIKey = ""
     @AppStorage("iCloudSyncEnabled") private var iCloudSyncEnabled = false
     @AppStorage("audioCrossfadeSeconds") private var audioCrossfadeSeconds = 0
@@ -50,6 +52,10 @@ struct SettingsView: View {
                     showCookieGuide = false
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { showCookieImporter = true }
                 }
+            }
+            .fullScreenCover(isPresented: $showOnboarding) {
+                OnboardingView { showOnboarding = false }
+                    .interactiveDismissDisabled()
             }
             .alert("OfflineTube", isPresented: Binding(get: { resultMessage != nil }, set: { if !$0 { resultMessage = nil } })) { Button("OK") { resultMessage = nil } } message: { Text(resultMessage ?? "") }
     }
@@ -123,6 +129,31 @@ struct SettingsView: View {
                     Label("Show Onboarding Again", systemImage: "sparkles.rectangle.stack")
                 }
             }
+            Section("App Lock") {
+                Toggle("Require \(appLock.biometryDisplayName)", isOn: Binding(
+                    get: { appLock.isEnabled },
+                    set: { enabled in
+                        if enabled { appLock.requestEnable() }
+                        else { appLock.disable() }
+                    }
+                ))
+                if appLock.isEnabled {
+                    Picker("Lock After", selection: Binding(
+                        get: { appLock.lockDelay },
+                        set: { appLock.setLockDelay($0) }
+                    )) {
+                        ForEach(AppLockManager.LockDelay.allCases) { delay in
+                            Text(delay.title).tag(delay)
+                        }
+                    }
+                }
+                if let error = appLock.errorMessage {
+                    Text(error).font(.footnote).foregroundStyle(.secondary)
+                } else {
+                    Text("Uses iOS biometrics only. Offline audio continues playing while the interface is locked.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             Section("Backend") {
                 TextField("Backend URL", text: $backendURL).textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
                 Text("The current download service is preserved. Change this only when using another server.").font(.footnote).foregroundStyle(.secondary)
@@ -154,7 +185,12 @@ struct SettingsView: View {
                 Text("Downloads are authorized automatically per device. This administrator token is only needed to replace the server's YouTube cookie.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("About") { LabeledContent("OfflineTube", value: "Phase 2") }
+            Section("About") {
+                Button { showOnboarding = true } label: {
+                    Label("Show Onboarding Again", systemImage: "sparkles.rectangle.stack")
+                }
+                LabeledContent("OfflineTube", value: "Phase 2")
+            }
         }
     }
 
