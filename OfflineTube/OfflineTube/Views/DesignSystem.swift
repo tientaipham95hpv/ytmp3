@@ -112,7 +112,7 @@ private final class ArtworkImageCache: @unchecked Sendable {
 
     func image(at url: URL) async -> UIImage? {
         if let cached = cache.object(forKey: url as NSURL) { return cached }
-        let task = Task.detached(priority: .utility) { [self] in
+        let task: Task<UIImage?, Never> = Task.detached(priority: .utility) { [self] in
             guard !Task.isCancelled,
                   let source = CGImageSourceCreateWithURL(url as CFURL, nil),
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
