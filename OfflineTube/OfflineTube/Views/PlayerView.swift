@@ -1,5 +1,6 @@
 import AVKit
 import SwiftUI
+import UIKit
 
 struct PlayerView: View {
     @Environment(\.dismiss) private var dismiss
@@ -94,12 +95,18 @@ struct PlayerView: View {
         } message: {
             Text(exportError ?? "Unknown error")
         }
+        .task(id: player.currentItem?.id) {
+            if player.currentItem?.isVideo == true { showVideoFullscreen = true }
+        }
         .fullScreenCover(isPresented: $showVideoFullscreen) {
             ZStack(alignment: .topTrailing) {
                 Color.black.ignoresSafeArea()
                 PlayerController(player: player.player).ignoresSafeArea()
                 Button { showVideoFullscreen = false } label: { Image(systemName: "xmark.circle.fill").font(.largeTitle).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.45)) }.padding()
-            }.statusBarHidden()
+            }
+            .statusBarHidden()
+            .onAppear { InterfaceOrientation.request(.landscape) }
+            .onDisappear { InterfaceOrientation.request(.portrait) }
         }
     }
 
@@ -221,6 +228,20 @@ struct PlayerView: View {
 
     private var background: some View {
         LinearGradient(colors: [Color.accentColor.opacity(0.16), Color(.systemBackground)], startPoint: .top, endPoint: .center).ignoresSafeArea()
+    }
+}
+
+@MainActor
+private enum InterfaceOrientation {
+    static func request(_ orientations: UIInterfaceOrientationMask) {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { error in
+            // Rotation can be declined while another system transition is active.
+            // The player remains usable and the next presentation retries it.
+            print("Orientation request failed: \(error.localizedDescription)")
+        }
     }
 }
 
