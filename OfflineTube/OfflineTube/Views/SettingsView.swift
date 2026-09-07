@@ -14,7 +14,7 @@ struct SettingsView: View {
     @AppStorage("appTheme") private var theme = AppTheme.system.rawValue
     @AppStorage("accentChoice") private var accent = AccentChoice.pink.rawValue
     @AppStorage("appLanguage") private var language = AppLanguage.vietnamese.rawValue
-    @AppStorage("backendURL") private var backendURL = "https://offlinetube.cineviet.live"
+    @AppStorage("backendURL") private var backendURL = "https://offlinetube.noza.site"
     @AppStorage("lyricsProviderURL") private var lyricsProviderURL = ""
     @State private var resultMessage: String?
     @State private var accessToken = ""

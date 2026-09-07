@@ -15,10 +15,10 @@ Personal iOS 17+ offline YouTube media client. The SwiftUI app never runs `yt-dl
 ```bash
 docker compose up -d --build
 # Local origin: http://127.0.0.1:18080
-# Production: https://offlinetube.cineviet.live
+# Production: https://offlinetube.noza.site
 ```
 
-Or use the Python setup in `backend/README.md`. The production app defaults to `https://offlinetube.cineviet.live`; the backend runs in Docker behind Nginx on loopback port `18080` with a persistent volume and restarts automatically after Docker/VPS restarts.
+Or use the Python setup in `backend/README.md`. The production app defaults to `https://offlinetube.noza.site`; the backend runs in Docker behind Nginx on loopback port `18080` with a persistent volume and restarts automatically after Docker/VPS restarts.
 
 If YouTube requests bot verification, export authenticated YouTube cookies in Netscape format to `secrets/youtube-cookies.txt`, then restart the backend. The private secrets directory is mounted only into the backend and ignored by Git; never commit or share it publicly.
 
