@@ -124,7 +124,10 @@ struct PlaylistDetailView: View {
     @State private var editingName = false
     @State private var newName = ""
 
-    private var items: [MediaItem] { playlist.itemIDs.compactMap { id in allItems.first { $0.id == id && $0.isAvailableOffline } } }
+    private var items: [MediaItem] {
+        let itemsByID = Dictionary(uniqueKeysWithValues: allItems.map { ($0.id, $0) })
+        return playlist.itemIDs.compactMap { itemsByID[$0] }
+    }
 
     var body: some View {
         List {
@@ -145,7 +148,11 @@ struct PlaylistDetailView: View {
                         ShareLink(item: item.localURL) { Label("Share / Export", systemImage: "square.and.arrow.up") }
                     }
             }
-            .onDelete { offsets in playlist.itemIDs.remove(atOffsets: offsets); save() }
+            .onDelete { offsets in
+                let removedIDs = Set(offsets.compactMap { items.indices.contains($0) ? items[$0].id : nil })
+                playlist.itemIDs.removeAll { removedIDs.contains($0) }
+                save()
+            }
             .onMove { source, destination in playlist.itemIDs.move(fromOffsets: source, toOffset: destination); save() }
         }
         .navigationTitle(playlist.name)

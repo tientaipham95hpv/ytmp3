@@ -7,15 +7,17 @@ struct LyricLine: Identifiable, Equatable {
 }
 
 enum LRCParser {
-    private static let expression = try! NSRegularExpression(pattern: #"\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?\]"#)
+    private static let expression = try? NSRegularExpression(pattern: #"\[(\d{1,3}):(\d{2})(?:[\.:](\d{1,3}))?\]"#)
 
     static func parse(_ value: String) -> [LyricLine] {
+        guard let expression else { return [] }
         var parsed: [(Double, String)] = []
         for rawLine in value.components(separatedBy: .newlines) {
             let range = NSRange(rawLine.startIndex..., in: rawLine)
             let matches = expression.matches(in: rawLine, range: range)
             guard !matches.isEmpty else { continue }
-            let textStart = matches.last!.range.location + matches.last!.range.length
+            guard let lastMatch = matches.last else { continue }
+            let textStart = lastMatch.range.location + lastMatch.range.length
             let text = String(rawLine[String.Index(utf16Offset: textStart, in: rawLine)...]).trimmingCharacters(in: .whitespaces)
             for match in matches {
                 guard let minuteRange = Range(match.range(at: 1), in: rawLine), let secondRange = Range(match.range(at: 2), in: rawLine) else { continue }

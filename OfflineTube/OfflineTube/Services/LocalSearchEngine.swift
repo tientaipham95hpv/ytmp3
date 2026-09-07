@@ -61,9 +61,14 @@ enum LocalSearchEngine {
         documents: [LocalSearchDocument],
         request: LocalSearchRequest
     ) async -> LocalSearchResponse {
-        await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             searchSynchronously(documents: documents, request: request)
-        }.value
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     static func searchSynchronously(
@@ -75,7 +80,8 @@ enum LocalSearchEngine {
         var matches: [(document: LocalSearchDocument, score: Int)] = []
         matches.reserveCapacity(min(documents.count, 512))
 
-        for document in documents {
+        for (index, document) in documents.enumerated() {
+            if index.isMultiple(of: 256), isCurrentTaskCancelled { break }
             guard matchesFilters(document, request: request) else { continue }
             let score = relevanceScore(document, query: normalizedQuery, tokens: tokens)
             guard normalizedQuery.isEmpty || score > 0 else { continue }
@@ -169,7 +175,8 @@ enum LocalSearchEngine {
         guard !query.isEmpty else { return [] }
         var seen = Set<String>()
         var values: [String] = []
-        for document in documents {
+        for (index, document) in documents.enumerated() {
+            if index.isMultiple(of: 256), isCurrentTaskCancelled { return values }
             for candidate in [document.title, document.subtitle] where !candidate.isEmpty {
                 let normalized = normalize(candidate)
                 guard normalized.contains(query), seen.insert(normalized).inserted else { continue }
@@ -184,5 +191,9 @@ enum LocalSearchEngine {
         value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: .current)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+    }
+
+    private static var isCurrentTaskCancelled: Bool {
+        withUnsafeCurrentTask { $0?.isCancelled ?? false }
     }
 }

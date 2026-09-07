@@ -243,6 +243,11 @@ async def lifespan(_: FastAPI):
     for process in processes:
         if process.poll() is None:
             process.terminate()
+    pending = list(active_tasks)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 app = FastAPI(title="OfflineTube API", version="1.0.0", lifespan=lifespan)

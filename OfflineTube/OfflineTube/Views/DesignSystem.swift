@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ImageIO
 
 enum AppMetrics {
     static let page: CGFloat = 18
@@ -47,10 +48,11 @@ struct ArtworkView: View {
     var localURL: URL? = nil
     var isVideo = false
     var cornerRadius: CGFloat = 12
+    @State private var localImage: UIImage?
 
     var body: some View {
         Group {
-            if let localURL, let image = UIImage(contentsOfFile: localURL.path) {
+            if let image = localImage {
                 artwork(Image(uiImage: image))
             } else {
                 AsyncImage(url: url.flatMap(URL.init(string:))) { phase in
@@ -73,6 +75,10 @@ struct ArtworkView: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(isVideo ? "Video artwork" : "Audio artwork")
+        .task(id: localURL?.path) {
+            guard let localURL else { localImage = nil; return }
+            localImage = await ArtworkImageCache.shared.image(at: localURL)
+        }
     }
 
     private func artwork(_ image: Image) -> some View {
@@ -92,6 +98,44 @@ struct ArtworkView: View {
                         .font(.title2.weight(.semibold)).foregroundStyle(.white.opacity(0.9))
                 }
             }
+    }
+}
+
+private final class ArtworkImageCache: @unchecked Sendable {
+    static let shared = ArtworkImageCache()
+    private let cache = NSCache<NSURL, UIImage>()
+
+    private init() {
+        cache.countLimit = 250
+        cache.totalCostLimit = 64 * 1024 * 1024
+    }
+
+    func image(at url: URL) async -> UIImage? {
+        if let cached = cache.object(forKey: url as NSURL) { return cached }
+        let task = Task.detached(priority: .utility) { [self] in
+            guard !Task.isCancelled,
+                  let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+                  let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else { return nil }
+            let maxPixelSize: CGFloat = 512
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            let image = UIImage(cgImage: cgImage)
+            let cost = min(Int(width.doubleValue * height.doubleValue * 4), Int(maxPixelSize * maxPixelSize * 4))
+            cache.setObject(image, forKey: url as NSURL, cost: cost)
+            return image
+        }
+        return await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 }
 

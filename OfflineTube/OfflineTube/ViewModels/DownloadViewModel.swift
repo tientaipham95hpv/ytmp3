@@ -151,6 +151,7 @@ final class DownloadViewModel: ObservableObject {
     let audioQualities = [("original", "Original/M4A"), ("128", "MP3 128"), ("192", "MP3 192"), ("320", "MP3 320")]
     let videoQualities = [("360", "360p"), ("480", "480p"), ("720", "720p"), ("1080", "1080p"), ("best", "Best")]
     private var workerTasks: [UUID: Task<Void, Never>] = [:]
+    private var activeWorkerItems: [UUID: UUID] = [:]
     private var maximumConcurrentDownloads: Int { min(4, max(1, UserDefaults.standard.integer(forKey: "maxConcurrentDownloads"))) }
     private var modelContext: ModelContext?
     private let logger = Logger(subsystem: "com.personal.OfflineTube", category: "Downloads")
@@ -158,18 +159,26 @@ final class DownloadViewModel: ObservableObject {
     private var schedulerObservers: [AnyCancellable] = []
     private var schedulerTimer: AnyCancellable?
     private var pendingSchedule: (date: Date?, wifiOnly: Bool?, chargingOnly: Bool, ignoreWindow: Bool)?
+    private var queuePersistenceRevision: UInt64 = 0
 
     init() {
         if UserDefaults.standard.object(forKey: "maxConcurrentDownloads") == nil { UserDefaults.standard.set(2, forKey: "maxConcurrentDownloads") }
         UIDevice.current.isBatteryMonitoringEnabled = true
         quality = UserDefaults.standard.string(forKey: "defaultAudioQuality") ?? "original"
-        if let data = try? Data(contentsOf: queueFileURL),
-           var saved = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) {
-            for index in saved.indices where saved[index].state == .downloading || saved[index].state == .saving {
-                saved[index].state = .queued
+        if let data = try? Data(contentsOf: queueFileURL) {
+            if data.count <= 10 * 1024 * 1024,
+               var saved = try? JSONDecoder().decode([DownloadQueueItem].self, from: data) {
+                for index in saved.indices where saved[index].state == .downloading || saved[index].state == .saving {
+                    saved[index].state = .queued
+                }
+                queueItems = saved
+                activeBatchID = saved.reversed().compactMap(\.batchID).first
+            } else {
+                let quarantine = queueFileURL.deletingPathExtension()
+                    .appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
+                try? FileManager.default.moveItem(at: queueFileURL, to: quarantine)
+                logger.error("invalid download queue quarantined")
             }
-            queueItems = saved
-            activeBatchID = saved.reversed().compactMap(\.batchID).first
         }
         schedulerObservers = [
             NetworkMonitor.shared.$isConnected.sink { [weak self] _ in self?.startWorkersIfNeeded() },
@@ -177,6 +186,12 @@ final class DownloadViewModel: ObservableObject {
             NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification).sink { [weak self] _ in self?.startWorkersIfNeeded() }
         ]
         schedulerTimer = Timer.publish(every: 30, on: .main, in: .common).autoconnect().sink { [weak self] _ in self?.startWorkersIfNeeded() }
+    }
+
+    deinit {
+        workerTasks.values.forEach { $0.cancel() }
+        schedulerTimer?.cancel()
+        schedulerObservers.forEach { $0.cancel() }
     }
 
     func attach(modelContext: ModelContext) {
@@ -325,7 +340,11 @@ final class DownloadViewModel: ObservableObject {
         let backendID = queueItems[index].backendJobID
         queueItems[index].state = .cancelled
         queueItems[index].speedBytesPerSecond = nil
+        for workerID in activeWorkerItems.compactMap({ $0.value == id ? $0.key : nil }) {
+            workerTasks[workerID]?.cancel()
+        }
         if let backendID { Task { _ = try? await APIClient.shared.cancelJob(id: backendID) } }
+        startWorkersIfNeeded()
     }
 
     func cancelDownload() {
@@ -368,16 +387,20 @@ final class DownloadViewModel: ObservableObject {
               queueItems.contains(where: { $0.state == .queued && waitingReason(for: $0) == nil }) {
             let workerID = UUID()
             workerTasks[workerID] = Task { [weak self] in
-                await self?.processQueue()
+                await self?.processQueue(workerID: workerID)
+                self?.activeWorkerItems.removeValue(forKey: workerID)
                 self?.workerTasks.removeValue(forKey: workerID)
                 self?.startWorkersIfNeeded()
             }
         }
     }
 
-    private func processQueue() async {
-        while let id = queueItems.first(where: { $0.state == .queued && waitingReason(for: $0) == nil })?.id {
+    private func processQueue(workerID: UUID) async {
+        while !Task.isCancelled,
+              let id = queueItems.first(where: { $0.state == .queued && waitingReason(for: $0) == nil })?.id {
+            activeWorkerItems[workerID] = id
             await processItem(id: id)
+            activeWorkerItems[workerID] = nil
         }
         if !queueItems.contains(where: { $0.state == .downloading || $0.state == .saving }) {
             isDownloading = false; progress = 0; statusText = ""
@@ -385,6 +408,7 @@ final class DownloadViewModel: ObservableObject {
     }
 
     private func processItem(id: UUID) async {
+        guard !Task.isCancelled else { return }
         guard let index = queueItems.firstIndex(where: { $0.id == id }), let modelContext else { return }
         queueItems[index].state = .downloading
         isDownloading = true; errorMessage = nil; completedMessage = nil; progress = 0; statusText = localized("Creating job…", "Đang tạo tác vụ…")
@@ -462,6 +486,12 @@ final class DownloadViewModel: ObservableObject {
                 }
                 try await Task.sleep(for: .seconds(1))
             }
+        } catch is CancellationError {
+            guard let cancelledIndex = queueItems.firstIndex(where: { $0.id == id }),
+                  queueItems[cancelledIndex].state != .cancelled else { return }
+            queueItems[cancelledIndex].state = .queued
+            queueItems[cancelledIndex].error = localized("Paused", "Đã tạm dừng")
+            queueItems[cancelledIndex].speedBytesPerSecond = nil
         } catch {
             guard let failedIndex = queueItems.firstIndex(where: { $0.id == id }), queueItems[failedIndex].state != .cancelled else { return }
             if let apiError = error as? APIError, apiError.statusCode == 404, queueItems[failedIndex].backendJobID != nil {
@@ -569,13 +599,19 @@ final class DownloadViewModel: ObservableObject {
     private func persistQueue() {
         let url = queueFileURL
         let snapshot = queueItems
-        Task { await QueuePersistence.shared.save(snapshot, to: url) }
+        queuePersistenceRevision &+= 1
+        let revision = queuePersistenceRevision
+        Task { await QueuePersistence.shared.save(snapshot, revision: revision, to: url) }
     }
 }
 
 private actor QueuePersistence {
     static let shared = QueuePersistence()
-    func save(_ queue: [DownloadQueueItem], to url: URL) {
+    private var latestRevision: UInt64 = 0
+
+    func save(_ queue: [DownloadQueueItem], revision: UInt64, to url: URL) {
+        guard revision > latestRevision else { return }
+        latestRevision = revision
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(queue).write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])

@@ -2,9 +2,18 @@ name: Build unsigned iOS IPA
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "OfflineTube/**"
+      - ".github/workflows/build-ios.yml"
   push:
+    branches:
+      - main
     tags:
       - "v*"
+    paths:
+      - "OfflineTube/**"
+      - ".github/workflows/build-ios.yml"
 
 permissions:
   contents: write
@@ -89,6 +98,13 @@ jobs:
             exit "$RESULT"
           fi
           "$RUNNER_TEMP/search-benchmark"
+
+      - name: Stress test Library and large playlists
+        run: |
+          xcrun swiftc -O \
+            OfflineTube/LibraryStressTest/main.swift \
+            -o "$RUNNER_TEMP/library-stress"
+          "$RUNNER_TEMP/library-stress"
 
       - name: Test backup export-delete-restore flow
         run: |

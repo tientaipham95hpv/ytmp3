@@ -584,10 +584,10 @@ private struct CookieGuideView: View {
                     }.frame(maxWidth: .infinity)
 
                     guideStep(1, icon: "safari.fill", title: "Install Cookie-Editor", detail: "Install the Safari extension, then enable it in Settings → Apps → Safari → Extensions.", actionTitle: "Open App Store") {
-                        openURL(URL(string: "https://apps.apple.com/app/cookie-editor/id6446215341")!)
+                        if let url = URL(string: "https://apps.apple.com/app/cookie-editor/id6446215341") { openURL(url) }
                     }
                     guideStep(2, icon: "person.crop.circle.badge.checkmark", title: "Sign in to YouTube", detail: "Open YouTube in Safari and sign in with a secondary account. Allow Cookie-Editor access to youtube.com.", actionTitle: "Open YouTube") {
-                        openURL(URL(string: "https://m.youtube.com")!)
+                        if let url = URL(string: "https://m.youtube.com") { openURL(url) }
                     }
                     guideStep(3, icon: "square.and.arrow.down", title: "Export Netscape cookies", detail: "From Safari’s Extensions menu, open Cookie-Editor, choose Export and select Netscape format. Save cookies.txt to Files.")
                     guideStep(4, icon: "checkmark.shield.fill", title: "Verify and replace", detail: "Select cookies.txt below. OfflineTube sends it over HTTPS; the server tests YouTube before replacing the active cookie.", actionTitle: "Choose cookies.txt", action: selectFile)

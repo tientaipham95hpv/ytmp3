@@ -40,7 +40,9 @@ struct LibraryView: View {
         switch sort {
         case .newest: result.sort { $0.createdAt > $1.createdAt }
         case .title: result.sort { $0.title.localizedCompare($1.title) == .orderedAscending }
-        case .size: result.sort { size($0) > size($1) }
+        case .size:
+            let sizes = Dictionary(uniqueKeysWithValues: result.map { ($0.id, size($0)) })
+            result.sort { sizes[$0.id, default: 0] > sizes[$1.id, default: 0] }
         case .played: result.sort { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
         }
         return result

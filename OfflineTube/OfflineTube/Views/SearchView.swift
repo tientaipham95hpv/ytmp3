@@ -242,7 +242,7 @@ struct SearchView: View {
         var channelCounts: [String: Int] = [:]
         items.forEach { if !$0.channel.isEmpty { channelCounts[$0.channel, default: 0] += 1 } }
         suggestedChannels = channelCounts.sorted { $0.value > $1.value }.prefix(5).map(\.key)
-        let media = items.filter(\.isAvailableOffline).map {
+        let media = items.map {
             LocalSearchDocument(
                 id: $0.id, kind: .media, title: $0.title, subtitle: $0.channel,
                 mediaType: $0.isVideo ? "video" : "audio", isFavorite: $0.isFavorite,

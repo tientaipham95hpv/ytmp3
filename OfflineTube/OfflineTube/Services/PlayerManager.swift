@@ -40,6 +40,7 @@ final class PlayerManager: ObservableObject {
     private var crossfadeTask: Task<Void, Never>?
     private var isCrossfading = false
     private var routeChangeObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
     private var modelContext: ModelContext?
     private var lastSavedSecond = -1
     private var lastNowPlayingSecond = -1
@@ -70,6 +71,7 @@ final class PlayerManager: ObservableObject {
         if let timeObserver, let observedTimePlayer { observedTimePlayer.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         if let routeChangeObserver { NotificationCenter.default.removeObserver(routeChangeObserver) }
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
         sleepTask?.cancel()
         crossfadeTask?.cancel()
     }
@@ -546,7 +548,7 @@ final class PlayerManager: ObservableObject {
     }
 
     private func observeAudioSession() {
-        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
+        interruptionObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
             Task { @MainActor in
                 guard let self,
                       let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,

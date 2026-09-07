@@ -33,7 +33,7 @@ private struct MainAppView: View {
     @StateObject private var downloads = DownloadViewModel()
     @StateObject private var network = NetworkMonitor.shared
     @Query private var mediaItems: [MediaItem]
-    @Query private var playlists: [MediaPlaylist]
+    @State private var artworkRecoveryTask: Task<Void, Never>?
     @State private var selectedTab = 0
     @State private var showPlayer = false
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: OnboardingView.completedKey)
@@ -135,36 +135,39 @@ private struct MainAppView: View {
             }
         }
         .onChange(of: network.isConnected) { _, connected in
-            if connected { Task { await cloudSync.sync() } }
+            if connected {
+                Task { await cloudSync.sync() }
+                cacheMissingArtwork()
+            } else {
+                artworkRecoveryTask?.cancel()
+            }
         }
+        .onDisappear { artworkRecoveryTask?.cancel() }
     }
 
 
     private func reconcileOfflineLibrary() {
         let missing = mediaItems.filter { !$0.isAvailableOffline }
-        if !missing.isEmpty {
-            let missingIDs = Set(missing.map(\.id))
-            if let current = player.currentItem, missingIDs.contains(current.id) { player.stopIfPlaying(current) }
-            playlists.forEach { playlist in
-                playlist.itemIDs.removeAll { missingIDs.contains($0) }
-                playlist.updatedAt = Date()
-            }
-            missing.forEach(modelContext.delete)
-            try? modelContext.save()
-        }
+        let missingIDs = Set(missing.map(\.id))
+        if let current = player.currentItem, missingIDs.contains(current.id) { player.stopIfPlaying(current) }
+        // Preserve metadata and playlist membership: a file may only be temporarily
+        // unavailable during a restore or file-provider transition.
         cacheMissingArtwork()
     }
 
     private func cacheMissingArtwork() {
         guard network.isConnected else { return }
         let candidates = mediaItems.filter { $0.isAvailableOffline && $0.artworkFilename == nil && $0.thumbnailURL != nil }
-        for item in candidates {
-            Task {
+        artworkRecoveryTask?.cancel()
+        artworkRecoveryTask = Task {
+            for (index, item) in candidates.enumerated() {
+                guard !Task.isCancelled, network.isConnected else { return }
                 if let filename = await FileStore.saveArtwork(from: item.thumbnailURL, sourceID: item.sourceID) {
                     item.artworkFilename = filename
-                    try? modelContext.save()
+                    if index.isMultiple(of: 20) { try? modelContext.save() }
                 }
             }
+            try? modelContext.save()
         }
     }
 }

@@ -1,5 +1,5 @@
 import Foundation
-import UIKit
+import ImageIO
 
 enum FileStore {
     struct StorageSnapshot {
@@ -59,7 +59,7 @@ enum FileStore {
 
     static func saveCustomArtwork(data: Data, itemID: UUID) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
-            guard !data.isEmpty, data.count <= 20 * 1024 * 1024, UIImage(data: data) != nil else {
+            guard !data.isEmpty, data.count <= 20 * 1024 * 1024, isSafeImage(data) else {
                 throw CocoaError(.fileReadCorruptFile)
             }
             let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
@@ -91,6 +91,7 @@ enum FileStore {
         guard let remoteValue, let remoteURL = URL(string: remoteValue),
               let (data, response) = try? await URLSession.shared.data(from: remoteURL),
               data.count <= 15 * 1024 * 1024,
+              isSafeImage(data),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         let ext = response.mimeType == "image/png" ? "png" : "jpg"
         let safeID = sourceID.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "_", options: .regularExpression)
@@ -104,6 +105,18 @@ enum FileStore {
 
     static func fileSize(for item: MediaItem) -> Int64 {
         (try? FileManager.default.attributesOfItem(atPath: item.localURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    private static func isSafeImage(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber else { return false }
+        let pixels = width.int64Value * height.int64Value
+        return width.intValue > 0 && height.intValue > 0
+            && width.intValue <= 12_000 && height.intValue <= 12_000
+            && pixels <= 80_000_000
     }
 
     static func storageUsage() -> Int64 {
