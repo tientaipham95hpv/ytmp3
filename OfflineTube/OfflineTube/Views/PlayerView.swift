@@ -19,7 +19,7 @@ struct PlayerView: View {
             GeometryReader { proxy in
                 ScrollView {
                     if let item = player.currentItem {
-                        VStack(spacing: 24) {
+                        VStack(spacing: 20) {
                             if !item.isVideo {
                                 Picker("Player Section", selection: $selectedPage) {
                                     Label("Player", systemImage: "play.circle").tag(0)
@@ -32,12 +32,15 @@ struct PlayerView: View {
                             } else {
                                 media(item, width: proxy.size.width)
                                 metadata(item)
-                                timeline
-                                transport
-                                secondaryControls
+                                if item.isVideo {
+                                    secondaryControls
+                                        .padding(.top, 2)
+                                } else {
+                                    playbackControls
+                                }
                             }
                         }
-                        .padding(.horizontal, 24).padding(.bottom, 28)
+                        .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 28)
                         .frame(minHeight: proxy.size.height)
                     } else {
                         ContentUnavailableView("Nothing Playing", systemImage: "play.slash")
@@ -142,8 +145,8 @@ struct PlayerView: View {
             }
         } else {
             ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, cornerRadius: 24)
-                .frame(width: min(width - 48, 390), height: min(width - 48, 390))
-                .shadow(color: .black.opacity(0.28), radius: 24, y: 14)
+                .frame(width: min(width - 72, 340), height: min(width - 72, 340))
+                .shadow(color: .black.opacity(0.24), radius: 20, y: 12)
         }
     }
 
@@ -160,6 +163,16 @@ struct PlayerView: View {
             HStack { Text(player.currentTime.mediaTime); Spacer(); Text("-\(max(0, player.duration - player.currentTime).mediaTime)") }
                 .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
+    }
+
+    private var playbackControls: some View {
+        VStack(spacing: 18) {
+            timeline
+            transport
+            secondaryControls
+        }
+        .padding(.horizontal, 16).padding(.vertical, 18)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private var transport: some View {

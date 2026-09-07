@@ -31,14 +31,10 @@ struct HomeView: View {
                 if downloads.isLoadingInfo { metadataSkeleton }
                 if let error = downloads.errorMessage { errorState(error) }
                 if let info = downloads.mediaInfo { mediaCard(info) }
-                mediaSection("Continue Listening", items: resolved(homeContent.continueListening), emptyMessage: "Partly played media appears here")
+                mediaSection("Continue Listening", items: resolved(homeContent.continueListening), hidesWhenEmpty: true)
                 mediaSection("Recently Added", items: resolved(homeContent.recentlyAdded))
-                mediaSection("Recently Played", items: resolved(homeContent.recentlyPlayed))
-                mediaSection("Favorites", items: resolved(homeContent.favorites))
-                mediaSection("Most Played", items: resolved(homeContent.mostPlayed))
-                mediaSection("Recommended for You", items: resolved(homeContent.recommendations), emptyMessage: "Recommendations improve as you listen")
-                mediaSection("Forgotten Downloads", items: resolved(homeContent.forgottenDownloads), emptyMessage: "Downloads untouched for 60 days appear here")
-                mediaSection("Large Files", items: resolved(homeContent.largeFiles), emptyMessage: "Files over 100 MB appear here")
+                mediaSection("Favorites", items: resolved(homeContent.favorites), hidesWhenEmpty: true)
+                mediaSection("Recommended for You", items: resolved(homeContent.recommendations), hidesWhenEmpty: true)
                 playlistSection
             }
             .padding(.horizontal, 18)
@@ -196,11 +192,12 @@ struct HomeView: View {
         Task { await downloads.download(modelContext: modelContext, ignoreWindow: ignoreWindow) }
     }
 
-    @ViewBuilder private func mediaSection(_ title: String, items: [MediaItem], emptyMessage: String = "Nothing here yet") -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    @ViewBuilder private func mediaSection(_ title: String, items: [MediaItem], hidesWhenEmpty: Bool = false) -> some View {
+        if !items.isEmpty || !hidesWhenEmpty {
+          VStack(alignment: .leading, spacing: 12) {
             SectionHeader(title: title)
             if items.isEmpty {
-                HStack { Image(systemName: "sparkles"); Text(emptyMessage).foregroundStyle(.secondary); Spacer() }
+                HStack { Image(systemName: "sparkles"); Text("Nothing here yet").foregroundStyle(.secondary); Spacer() }
                     .padding().background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 16))
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -223,6 +220,7 @@ struct HomeView: View {
                     }
                 }
             }
+          }
         }
     }
 

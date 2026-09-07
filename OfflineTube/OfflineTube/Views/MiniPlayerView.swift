@@ -11,7 +11,7 @@ struct MiniPlayerView: View {
                 HStack(spacing: 12) {
                     Button(action: openPlayer) {
                         HStack(spacing: 11) {
-                            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo, cornerRadius: 7).frame(width: 46, height: 46)
+                            ArtworkView(url: item.thumbnailURL, localURL: item.artworkURL, isVideo: item.isVideo, cornerRadius: 7).frame(width: 42, height: 42)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 Text(item.channel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -22,11 +22,10 @@ struct MiniPlayerView: View {
                         .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
                     Button { player.next(); Haptics.selection() } label: { Image(systemName: "forward.fill").frame(width: 30, height: 42) }
                         .accessibilityLabel("Next")
-                }.padding(.horizontal, 12).padding(.vertical, 6)
+                }.padding(.horizontal, 12).padding(.vertical, 5)
             }
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .padding(.horizontal, 8).padding(.bottom, 2)
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            .background(.regularMaterial)
+            .overlay(alignment: .top) { Divider() }
             .accessibilityElement(children: .contain)
             .accessibilityHint("Opens Now Playing")
         }

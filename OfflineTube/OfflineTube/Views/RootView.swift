@@ -58,6 +58,15 @@ private struct MainAppView: View {
             NavigationStack { DownloadsView() }.tabItem { Label("Downloads", systemImage: "arrow.down.circle.fill") }.tag(3)
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(4)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if player.currentItem != nil && !showPlayer {
+                MiniPlayerView {
+                    Haptics.selection()
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) { showPlayer = true }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         }
         if showPlayer {
             PlayerView(onClose: { withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) { showPlayer = false } })
@@ -79,15 +88,6 @@ private struct MainAppView: View {
             cloudSync.attach(context: modelContext)
             reconcileOfflineLibrary()
             await cloudSync.sync()
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if player.currentItem != nil && !showPlayer {
-                MiniPlayerView {
-                    Haptics.selection()
-                    withAnimation(.spring(response: 0.42, dampingFraction: 0.9)) { showPlayer = true }
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
         }
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
